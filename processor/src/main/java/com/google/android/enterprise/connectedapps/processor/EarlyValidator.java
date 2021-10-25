@@ -100,7 +100,7 @@ public final class EarlyValidator {
       "All classes specified in 'providers' must be provider classes";
   private static final String CONNECTOR_MUST_BE_INTERFACE = "Connectors must be interfaces";
   private static final String CONNECTOR_MUST_EXTEND_CONNECTOR =
-      "Interfaces specified as a connector must extend ProfileConnector";
+      "Interfaces specified as a connector must extend ProfileConnector or UserConnector";
   private static final String CUSTOM_PROFILE_CONNECTOR_MUST_BE_INTERFACE =
       "@CustomProfileConnector must only be applied to interfaces";
   private static final String CUSTOM_USER_CONNECTOR_MUST_BE_INTERFACE =
@@ -149,9 +149,6 @@ public final class EarlyValidator {
       "@CROSS_PROFILE_ANNOTATION annotations on methods can not specify a connector";
   private static final String METHOD_PARCELABLE_WRAPPERS_ERROR =
       "@CROSS_PROFILE_ANNOTATION annotations on methods can not specify parcelable wrappers";
-  private static final String METHOD_CLASSNAME_ERROR =
-      "@CROSS_PROFILE_ANNOTATION annotations on methods can not specify a profile class name";
-  private static final String INVALID_TIMEOUT_MILLIS = "timeoutMillis must be positive";
   private static final String ADDITIONAL_PROFILE_CONNECTOR_METHODS_ERROR =
       "Interfaces annotated with @GeneratedProfileConnector can not declare non-static methods";
   private static final String ADDITIONAL_USER_CONNECTOR_METHODS_ERROR =
@@ -484,7 +481,8 @@ public final class EarlyValidator {
     }
 
     if (configuration.connector().isPresent()
-        && !implementsInterface(configuration.connector().get(), profileConnectorType)) {
+        && !implementsInterface(configuration.connector().get(), profileConnectorType)
+        && !implementsInterface(configuration.connector().get(), userConnectorType)) {
       showError(CONNECTOR_MUST_EXTEND_CONNECTOR, configuration.configurationElement());
       isValid = false;
     }
@@ -539,9 +537,9 @@ public final class EarlyValidator {
       }
     }
 
-    if (crossProfileType.profileConnector().isPresent()
+    if (crossProfileType.connectorInfo().isPresent()
         && !crossProfileType
-            .profileConnector()
+            .connectorInfo()
             .get()
             .connectorElement()
             .getKind()
@@ -550,15 +548,12 @@ public final class EarlyValidator {
       isValid = false;
     }
 
-    if (crossProfileType.profileConnector().isPresent()
+    if (crossProfileType.connectorInfo().isPresent()
         && !implementsInterface(
-            crossProfileType.profileConnector().get().connectorElement(), profileConnectorType)) {
+            crossProfileType.connectorInfo().get().connectorElement(), profileConnectorType)
+        && !implementsInterface(
+            crossProfileType.connectorInfo().get().connectorElement(), userConnectorType)) {
       showError(CONNECTOR_MUST_EXTEND_CONNECTOR, crossProfileType.crossProfileTypeElement());
-      isValid = false;
-    }
-
-    if (crossProfileType.timeoutMillis() <= 0) {
-      showError(INVALID_TIMEOUT_MILLIS, crossProfileType.crossProfileTypeElement());
       isValid = false;
     }
 
@@ -652,7 +647,7 @@ public final class EarlyValidator {
 
       CrossProfileProviderAnnotationInfo annotationInfo =
           AnnotationFinder.extractCrossProfileProviderAnnotationInfo(
-              providerMethod, validatorContext.types(), validatorContext.elements());
+              validatorContext, providerMethod);
 
       if (!annotationInfo.staticTypes().isEmpty()) {
         showError(METHOD_STATICTYPES_ERROR, providerMethod);
@@ -718,8 +713,7 @@ public final class EarlyValidator {
     boolean isValid = true;
 
     CrossProfileAnnotationInfo crossProfileAnnotation =
-        AnnotationFinder.extractCrossProfileAnnotationInfo(
-            crossProfileMethod, validatorContext.types(), validatorContext.elements());
+        AnnotationFinder.extractCrossProfileAnnotationInfo(validatorContext, crossProfileMethod);
 
     if (!crossProfileAnnotation.connectorIsDefault()) {
       showError(METHOD_CONNECTOR_ERROR, crossProfileMethod);
@@ -731,21 +725,10 @@ public final class EarlyValidator {
       isValid = false;
     }
 
-    if (!crossProfileAnnotation.isProfileClassNameDefault()) {
-      showError(METHOD_CLASSNAME_ERROR, crossProfileMethod);
-      isValid = false;
-    }
-
-    if (crossProfileAnnotation.timeoutMillis().isPresent()
-        && crossProfileAnnotation.timeoutMillis().get() <= 0) {
-      showError(INVALID_TIMEOUT_MILLIS, crossProfileMethod);
-      isValid = false;
-    }
-
     if (!crossProfileMethod.getThrownTypes().isEmpty()) {
       if (CrossProfileMethodInfo.isFuture(crossProfileType.supportedTypes(), crossProfileMethod)
           || CrossProfileMethodInfo.getCrossProfileCallbackParam(
-                  validatorContext.elements(), crossProfileMethod)
+                  validatorContext, crossProfileMethod)
               .isPresent()) {
         showError(ASYNC_DECLARED_EXCEPTION_ERROR, crossProfileMethod);
         isValid = false;
@@ -874,7 +857,7 @@ public final class EarlyValidator {
 
     CrossProfileCallbackAnnotationInfo annotationInfo =
         AnnotationFinder.extractCrossProfileCallbackAnnotationInfo(
-            crossProfileCallbackInterface, validatorContext.types(), validatorContext.elements());
+            validatorContext, crossProfileCallbackInterface);
 
     PackageElement packageElement =
         (PackageElement) crossProfileCallbackInterface.getEnclosingElement();
@@ -988,7 +971,7 @@ public final class EarlyValidator {
     ClassName wrappedParamRawType =
         TypeUtils.getRawTypeClassName(
             ParcelableWrapperAnnotationInfo.extractFromParcelableWrapperAnnotation(
-                    validatorContext.types(),
+                    validatorContext,
                     customParcelableWrapper.getAnnotation(CustomParcelableWrapper.class))
                 .originalType()
                 .asType());
@@ -1084,8 +1067,7 @@ public final class EarlyValidator {
     ClassName wrappedFutureRawType =
         TypeUtils.getRawTypeClassName(
             FutureWrapperAnnotationInfo.extractFromFutureWrapperAnnotation(
-                    validatorContext.types(),
-                    futureWrapper.getAnnotation(CustomFutureWrapper.class))
+                    validatorContext, futureWrapper.getAnnotation(CustomFutureWrapper.class))
                 .originalType()
                 .asType());
 

@@ -16,7 +16,11 @@
 package com.google.android.enterprise.connectedapps.internal;
 
 import static com.google.android.enterprise.connectedapps.CrossProfileSender.MAX_BYTES_PER_BLOCK;
+import static com.google.android.enterprise.connectedapps.internal.BundleCallReceiver.STATUS_INCLUDES_BUNDLES;
+import static com.google.android.enterprise.connectedapps.internal.BundleCallReceiver.STATUS_INCOMPLETE;
+import static com.google.android.enterprise.connectedapps.internal.BundleCallReceiver.bytesRefersToBundle;
 
+import android.os.Bundle;
 import android.os.Parcel;
 import android.os.RemoteException;
 import android.os.TransactionTooLargeException;
@@ -30,19 +34,27 @@ import java.util.UUID;
  * This represents a single action of (sending a {@link Parcel} and possibly fetching a response,
  * which may be split up over many calls (if the payload is large).
  *
- * <p>The receiver should relay calls to a {@link ParcelCallReceiver}.
+ * <p>The receiver should relay calls to a {@link BundleCallReceiver}.
  */
-abstract class ParcelCallSender {
+abstract class BundleCallSender {
+
+  private static final String LOG_TAG = "BundleCallSender";
 
   private static final long RETRY_DELAY_MILLIS = 10;
   private static final int MAX_RETRIES = 10;
 
   /**
-   * The arguments passed to this should be passed to {@link ParcelCallReceiver#prepareCall(long,
+   * The arguments passed to this should be passed to {@link BundleCallReceiver#prepareCall(long,
    * int, int, byte[])}.
    */
   abstract void prepareCall(long callId, int blockId, int totalBytes, byte[] bytes)
       throws RemoteException;
+
+  /**
+   * The arguments passed to this should be passed to {@link BundleCallReceiver#prepareBundle(long,
+   * int, Bundle)}.
+   */
+  abstract void prepareBundle(long callId, int bundleId, Bundle bundle) throws RemoteException;
 
   private void prepareCallAndRetry(
       long callId, int blockId, int totalBytes, byte[] bytes, int retries) throws RemoteException {
@@ -58,7 +70,28 @@ abstract class ParcelCallSender {
         try {
           Thread.sleep(RETRY_DELAY_MILLIS);
         } catch (InterruptedException ex) {
-          Log.w("ParcelCallSender", "Interrupted on prepare retry", ex);
+          Log.w(LOG_TAG, "Interrupted on prepare retry", ex);
+          // If we can't sleep we'll just try again immediately
+        }
+      }
+    }
+  }
+
+  private void prepareBundleAndRetry(long callId, int bundleId, Bundle bundle, int retries)
+      throws RemoteException {
+    while (true) {
+      try {
+        prepareBundle(callId, bundleId, bundle);
+        break;
+      } catch (TransactionTooLargeException e) {
+        if (retries-- <= 0) {
+          throw e;
+        }
+
+        try {
+          Thread.sleep(RETRY_DELAY_MILLIS);
+        } catch (InterruptedException ex) {
+          Log.w(LOG_TAG, "Interrupted on prepare retry", ex);
           // If we can't sleep we'll just try again immediately
         }
       }
@@ -67,7 +100,7 @@ abstract class ParcelCallSender {
 
   /**
    * The arguments passed to this should be passed to {@link
-   * ParcelCallReceiver#getPreparedCall(long, int, byte[])} and used to complete the call.
+   * BundleCallReceiver#getPreparedCall(long, int, byte[])} and used to complete the call.
    */
   abstract byte[] call(long callId, int blockId, byte[] bytes) throws RemoteException;
 
@@ -84,7 +117,7 @@ abstract class ParcelCallSender {
         try {
           Thread.sleep(RETRY_DELAY_MILLIS);
         } catch (InterruptedException ex) {
-          Log.w("ParcelCallSender", "Interrupted on prepare retry", ex);
+          Log.w(LOG_TAG, "Interrupted on prepare retry", ex);
           // If we can't sleep we'll just try again immediately
         }
       }
@@ -93,9 +126,15 @@ abstract class ParcelCallSender {
 
   /**
    * The arguments passed to this should be passed to {@link
-   * ParcelCallReceiver#getPreparedResponse(long, int)}.
+   * BundleCallReceiver#getPreparedResponse(long, int)}.
    */
   abstract byte[] fetchResponse(long callId, int blockId) throws RemoteException;
+
+  /**
+   * The arguments passed to this should be passed to {@link
+   * BundleCallReceiver#getPreparedResponseBundle(long, int)}.
+   */
+  abstract Bundle fetchResponseBundle(long callId, int bundleId) throws RemoteException;
 
   private byte[] fetchResponseAndRetry(long callId, int blockId, int retries)
       throws RemoteException {
@@ -110,7 +149,29 @@ abstract class ParcelCallSender {
         try {
           Thread.sleep(RETRY_DELAY_MILLIS);
         } catch (InterruptedException ex) {
-          Log.w("ParcelCallSender", "Interrupted on prepare retry", ex);
+          Log.w(LOG_TAG, "Interrupted on prepare retry", ex);
+          // If we can't sleep we'll just try again immediately
+        }
+      }
+    }
+  }
+
+  private Bundle fetchResponseBundleAndRetry(long callId, int bundleId, int retries)
+      throws RemoteException {
+    while (true) {
+      try {
+        Bundle b = fetchResponseBundle(callId, bundleId);
+        b.setClassLoader(Bundler.class.getClassLoader());
+        return b;
+      } catch (TransactionTooLargeException e) {
+        if (retries-- <= 0) {
+          throw e;
+        }
+
+        try {
+          Thread.sleep(RETRY_DELAY_MILLIS);
+        } catch (InterruptedException ex) {
+          Log.w(LOG_TAG, "Interrupted on prepare retry", ex);
           // If we can't sleep we'll just try again immediately
         }
       }
@@ -121,15 +182,59 @@ abstract class ParcelCallSender {
    * Use the prepareCall(long, int, int, byte[])} and {@link #call(long, int, byte[])} methods to
    * make a call.
    *
-   * <p>The returned {@link Parcel} must be recycled after use.
-   *
-   * <p>Returns {@code null} if the call does not return anything
-   *
    * @throws UnavailableProfileException if any call fails
    */
-  public Parcel makeParcelCall(Parcel parcel) throws UnavailableProfileException {
+  public Bundle makeBundleCall(Bundle bundle) throws UnavailableProfileException {
     long callIdentifier = UUID.randomUUID().getMostSignificantBits();
-    byte[] bytes = parcel.marshall();
+
+    Parcel parcel = Parcel.obtain();
+    bundle.writeToParcel(parcel, /* flags= */ 0);
+    parcel.setDataPosition(0);
+
+    byte[] bytes;
+
+    try {
+      bytes = parcel.marshall();
+    } catch (RuntimeException | AssertionError e) {
+      // We can't marshall the parcel so we send the bundle directly
+      try {
+        prepareBundleAndRetry(callIdentifier, /* bundleId= */ 0, bundle, MAX_RETRIES);
+      } catch (RemoteException e1) {
+        throw new UnavailableProfileException("Error passing bundle for call", e1);
+      }
+      bytes = new byte[] {STATUS_INCLUDES_BUNDLES};
+    } finally {
+      parcel.recycle();
+    }
+
+    byte[] returnBytes = makeParcelCall(callIdentifier, bytes);
+
+    if (returnBytes.length == 0) {
+      return null;
+    }
+
+    if (bytesRefersToBundle(returnBytes)) {
+      try {
+        return fetchResponseBundleAndRetry(callIdentifier, /* bundleId= */ 0, MAX_RETRIES);
+      } catch (RemoteException e) {
+        throw new UnavailableProfileException("Error fetching bundle for response", e);
+      }
+    }
+
+    Parcel returnParcel = fetchResponseParcel(callIdentifier, returnBytes);
+    Bundle returnBundle = new Bundle(Bundler.class.getClassLoader());
+    returnBundle.readFromParcel(returnParcel);
+    returnParcel.recycle();
+
+    return returnBundle;
+  }
+
+  private boolean bytesAreIncomplete(byte[] bytes) {
+    return bytes[0] == STATUS_INCOMPLETE;
+  }
+
+  private byte[] makeParcelCall(long callIdentifier, byte[] bytes)
+      throws UnavailableProfileException {
     try {
       int numberOfBlocks = (int) Math.ceil(bytes.length * 1.0 / MAX_BYTES_PER_BLOCK);
       int blockIdentifier = 0;
@@ -152,32 +257,18 @@ abstract class ParcelCallSender {
       }
 
       // Since we know block size is below the limit any errors will be temporary so we should retry
-      byte[] returnBytes = callAndRetry(callIdentifier, blockIdentifier, bytes, MAX_RETRIES);
-
-      if (returnBytes.length == 0) {
-        return null;
-      }
-
-      return fetchResponseParcel(callIdentifier, returnBytes);
+      return callAndRetry(callIdentifier, blockIdentifier, bytes, MAX_RETRIES);
     } catch (RemoteException e) {
       throw new UnavailableProfileException("Could not access other profile", e);
     }
   }
 
-  /**
-   * Use the {@link ParcelCallSender#prepareCall(long, int, int, byte[])} and {@link
-   * ParcelCallSender#fetchResponse(long, int)} methods to fetch a prepared response.
-   *
-   * <p>The returned {@link Parcel} must be recycled after use.
-   *
-   * @throws UnavailableProfileException if any call fails
-   */
   private Parcel fetchResponseParcel(long callIdentifier, byte[] returnBytes)
       throws UnavailableProfileException {
 
     // returnBytes[0] is 0 if the bytes are complete, or 1 if we need to fetch more
     int byteOffset = 1;
-    if (returnBytes[0] == 1) {
+    if (bytesAreIncomplete(returnBytes)) {
       // returnBytes[1] - returnBytes[4] are an int representing the total size of the return
       // value
       int totalBytes = ByteBuffer.wrap(returnBytes).getInt(/* index= */ 1);

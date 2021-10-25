@@ -21,7 +21,7 @@ package com.google.android.enterprise.connectedapps.exceptions;
  * <p>To get the original exception, call {@link #getCause()}.
  */
 public class ProfileRuntimeException extends RuntimeException {
-  public ProfileRuntimeException(RuntimeException cause) {
+  public ProfileRuntimeException(Throwable cause) {
     super(cause);
   }
 }

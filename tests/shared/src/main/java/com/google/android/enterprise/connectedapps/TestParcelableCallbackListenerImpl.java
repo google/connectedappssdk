@@ -13,20 +13,19 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package com.google.android.enterprise.connectedapps.testing;
+package com.google.android.enterprise.connectedapps;
 
-import com.google.android.enterprise.connectedapps.Permissions;
+import android.os.Parcelable;
+import com.google.android.enterprise.connectedapps.testapp.TestParcelableCallbackListener;
 
-class FakePermissions implements Permissions {
+public class TestParcelableCallbackListenerImpl implements TestParcelableCallbackListener {
 
-  private final AbstractFakeProfileConnector fakeProfileConnector;
-
-  FakePermissions(AbstractFakeProfileConnector fakeProfileConnector) {
-    this.fakeProfileConnector = fakeProfileConnector;
-  }
+  public int callbackMethodCalls = 0;
+  public Parcelable parcelableCallbackValue;
 
   @Override
-  public boolean canMakeCrossProfileCalls() {
-    return fakeProfileConnector.hasPermissionToMakeCrossProfileCalls();
+  public void parcelableCallback(Parcelable s) {
+    callbackMethodCalls++;
+    parcelableCallbackValue = s;
   }
 }

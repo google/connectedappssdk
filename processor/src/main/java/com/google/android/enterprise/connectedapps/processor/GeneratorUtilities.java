@@ -292,8 +292,4 @@ public final class GeneratorUtilities {
   private static List<TypeMirror> convertParametersToTypes(CrossProfileMethodInfo method) {
     return method.methodElement().getParameters().stream().map(Element::asType).collect(toList());
   }
-
-  static ClassName appendToClassName(ClassName originalClassName, String suffix) {
-    return ClassName.get(originalClassName.packageName(), originalClassName.simpleName() + suffix);
-  }
 }

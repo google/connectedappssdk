@@ -13,14 +13,16 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package com.google.android.enterprise.connectedapps.testapp.types;
+package com.google.android.enterprise.connectedapps.instrumented.utils;
 
-import com.google.android.enterprise.connectedapps.annotations.CrossProfileProvider;
+import android.os.Parcelable;
+import com.google.android.enterprise.connectedapps.testapp.TestParcelableCallbackListener;
 
-public class TestInterfaceProvider {
-
-  @CrossProfileProvider
-  public TestCrossProfileInterface provideCrossProfileInterface() {
-    return s -> s;
+/** A {@link TestParcelableCallbackListener} which can block for a result. */
+public class BlockingParcelableCallbackListener extends BlockingCallbackListener<Parcelable>
+    implements TestParcelableCallbackListener {
+  @Override
+  public void parcelableCallback(Parcelable s) {
+    receive(s);
   }
 }

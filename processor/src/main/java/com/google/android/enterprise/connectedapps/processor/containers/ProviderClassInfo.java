@@ -26,6 +26,7 @@ import com.squareup.javapoet.ClassName;
 import java.util.Collection;
 import java.util.HashSet;
 import java.util.Set;
+import java.util.stream.Stream;
 import javax.lang.model.element.ElementKind;
 import javax.lang.model.element.ExecutableElement;
 import javax.lang.model.element.Modifier;
@@ -57,6 +58,8 @@ public abstract class ProviderClassInfo {
   public ClassName className() {
     return ClassName.get(providerClassElement());
   }
+
+  public abstract ConnectorInfo connectorInfo();
 
   public ImmutableCollection<VariableElement> publicConstructorArgumentTypes() {
     return ImmutableList.copyOf(
@@ -98,9 +101,7 @@ public abstract class ProviderClassInfo {
             .map(
                 crossProfileTypeElement ->
                     ValidatorCrossProfileTypeInfo.create(
-                        context.processingEnv(),
-                        crossProfileTypeElement,
-                        context.globalSupportedTypes()))
+                        context, crossProfileTypeElement, context.globalSupportedTypes()))
             .map(crossProfileType -> CrossProfileTypeInfo.create(context, crossProfileType))
             .collect(toSet());
 
@@ -109,16 +110,15 @@ public abstract class ProviderClassInfo {
             .map(
                 crossProfileTypeElement ->
                     ValidatorCrossProfileTypeInfo.create(
-                        context.processingEnv(),
-                        crossProfileTypeElement,
-                        context.globalSupportedTypes()))
+                        context, crossProfileTypeElement, context.globalSupportedTypes()))
             .map(crossProfileType -> CrossProfileTypeInfo.create(context, crossProfileType))
             .collect(toSet());
 
     return new AutoValue_ProviderClassInfo(
         provider.providerClassElement(),
         ImmutableSet.copyOf(nonStaticTypes),
-        ImmutableSet.copyOf(staticTypes));
+        ImmutableSet.copyOf(staticTypes),
+        findConnector(context, staticTypes, nonStaticTypes));
   }
 
   public static Collection<TypeElement> extractCrossProfileTypeElementsFromReturnValues(
@@ -126,5 +126,16 @@ public abstract class ProviderClassInfo {
     return findCrossProfileProviderMethodsInClass(providerClassElement).stream()
         .map(e -> elements.getTypeElement(e.getReturnType().toString()))
         .collect(toSet());
+  }
+
+  private static ConnectorInfo findConnector(
+      ValidatorContext context,
+      Set<CrossProfileTypeInfo> staticTypes,
+      Set<CrossProfileTypeInfo> nonStaticTypes) {
+    return Stream.concat(staticTypes.stream(), nonStaticTypes.stream())
+        .filter(typeInfo -> typeInfo.connectorInfo().isPresent())
+        .map(typeInfo -> typeInfo.connectorInfo().get())
+        .findFirst()
+        .orElse(ConnectorInfo.unspecified(context, context.globalSupportedTypes()));
   }
 }

@@ -15,23 +15,24 @@
  */
 package com.google.android.enterprise.connectedapps.internal;
 
+import android.os.Bundle;
 import android.os.RemoteException;
 import com.google.android.enterprise.connectedapps.ICrossProfileCallback;
 import com.google.android.enterprise.connectedapps.ICrossProfileService;
 import org.checkerframework.checker.nullness.qual.Nullable;
 
 /**
- * Implementation of {@link ParcelCallSender} used when making synchronous or asynchronous
+ * Implementation of {@link BundleCallSender} used when making synchronous or asynchronous
  * cross-profile calls.
  */
-public final class CrossProfileParcelCallSender extends ParcelCallSender {
+public final class CrossProfileBundleCallSender extends BundleCallSender {
 
   private final ICrossProfileService wrappedService;
   private final long crossProfileTypeIdentifier;
   private final int methodIdentifier;
   private final @Nullable ICrossProfileCallback callback;
 
-  public CrossProfileParcelCallSender(
+  public CrossProfileBundleCallSender(
       ICrossProfileService service,
       long crossProfileTypeIdentifier,
       int methodIdentifier,
@@ -52,6 +53,11 @@ public final class CrossProfileParcelCallSender extends ParcelCallSender {
   }
 
   @Override
+  void prepareBundle(long callId, int bundleId, Bundle bundle) throws RemoteException {
+    wrappedService.prepareBundle(callId, bundleId, bundle);
+  }
+
+  @Override
   byte[] call(long callId, int blockId, byte[] params) throws RemoteException {
     return wrappedService.call(
         callId, blockId, crossProfileTypeIdentifier, methodIdentifier, params, callback);
@@ -60,5 +66,10 @@ public final class CrossProfileParcelCallSender extends ParcelCallSender {
   @Override
   byte[] fetchResponse(long callId, int blockId) throws RemoteException {
     return wrappedService.fetchResponse(callId, blockId);
+  }
+
+  @Override
+  Bundle fetchResponseBundle(long callId, int bundleId) throws RemoteException {
+    return wrappedService.fetchResponseBundle(callId, bundleId);
   }
 }

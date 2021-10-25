@@ -15,24 +15,14 @@
  */
 package com.google.android.enterprise.connectedapps.instrumented.utils;
 
-import static java.nio.charset.StandardCharsets.UTF_8;
+import static com.google.android.enterprise.connectedapps.SharedTestUtilities.getUserHandleForUserId;
+import static com.google.android.enterprise.connectedapps.instrumented.utils.UserAndProfileTestUtilities.runCommandWithOutput;
 
 import android.content.Context;
-import android.os.Build.VERSION;
-import android.os.Build.VERSION_CODES;
-import android.os.ParcelFileDescriptor;
 import android.os.UserHandle;
-import androidx.test.platform.app.InstrumentationRegistry;
+import com.google.android.enterprise.connectedapps.ProfileConnectionHolder;
 import com.google.android.enterprise.connectedapps.ProfileConnector;
-import com.google.android.enterprise.connectedapps.SharedTestUtilities;
-import com.google.android.enterprise.connectedapps.instrumented.utils.ServiceCall.Parameter;
 import com.google.android.enterprise.connectedapps.testing.ProfileAvailabilityPoll;
-import java.io.FileInputStream;
-import java.io.InputStream;
-import java.util.NoSuchElementException;
-import java.util.Scanner;
-import java.util.regex.Matcher;
-import java.util.regex.Pattern;
 
 /**
  * Wrapper around {@link
@@ -45,46 +35,6 @@ public class InstrumentedTestUtilities {
   private final Context context;
   private final com.google.android.enterprise.connectedapps.testing.InstrumentedTestUtilities
       instrumentedTestUtilities;
-
-  private static final int R_REQUEST_QUIET_MODE_ENABLED_ID = 72;
-  private static final int REQUEST_QUIET_MODE_ENABLED_ID = 58;
-
-  private static final String USER_ID_KEY = "USER_ID";
-  private static final Parameter USER_ID_PARAMETER = new Parameter(USER_ID_KEY);
-
-  private static final ServiceCall R_TURN_OFF_WORK_PROFILE_COMMAND =
-      new ServiceCall("user", R_REQUEST_QUIET_MODE_ENABLED_ID)
-          .setUser(1000) // user 1000 has packageName "android"
-          .addStringParam("android") // callingPackage
-          .addBooleanParam(true) // enableQuietMode
-          .addIntParam(USER_ID_PARAMETER) // userId
-          .addIntParam(0) // target
-          .addIntParam(0); // flags
-
-  private static final ServiceCall TURN_OFF_WORK_PROFILE_COMMAND =
-      new ServiceCall("user", REQUEST_QUIET_MODE_ENABLED_ID)
-          .setUser(1000) // user 1000 has packageName "android"
-          .addStringParam("android") // callingPackage
-          .addBooleanParam(true) // enableQuietMode
-          .addIntParam(USER_ID_PARAMETER) // userId
-          .addIntParam(0); // target
-
-  private static final ServiceCall R_TURN_ON_WORK_PROFILE_COMMAND =
-      new ServiceCall("user", R_REQUEST_QUIET_MODE_ENABLED_ID)
-          .setUser(1000) // user 1000 has packageName "android"
-          .addStringParam("android") // callingPackage
-          .addBooleanParam(false) // enableQuietMode
-          .addIntParam(USER_ID_PARAMETER) // userId
-          .addIntParam(0) // target
-          .addIntParam(0); // flags
-
-  private static final ServiceCall TURN_ON_WORK_PROFILE_COMMAND =
-      new ServiceCall("user", REQUEST_QUIET_MODE_ENABLED_ID)
-          .setUser(1000) // user 1000 has packageName "android"
-          .addStringParam("android") // callingPackage
-          .addBooleanParam(false) // enableQuietMode
-          .addIntParam(USER_ID_PARAMETER) // userId
-          .addIntParam(0); // target
 
   public InstrumentedTestUtilities(Context context, ProfileConnector connector) {
     this.context = context;
@@ -111,7 +61,7 @@ public class InstrumentedTestUtilities {
   }
 
   private UserHandle getWorkProfileUserHandle() {
-    return SharedTestUtilities.getUserHandleForUserId(getWorkProfileUserId());
+    return getUserHandleForUserId(getWorkProfileUserId());
   }
 
   /**
@@ -206,45 +156,6 @@ public class InstrumentedTestUtilities {
   }
 
   /**
-   * Turn off the work profile and block until it has been turned off.
-   *
-   * <p>This uses {@link ServiceCall} and so is only guaranteed to work correctly on AOSP.
-   *
-   * @see #turnOffWorkProfile()
-   */
-  public void turnOffWorkProfileAndWait() {
-    turnOffWorkProfile();
-
-    ProfileAvailabilityPoll.blockUntilProfileNotAvailable(context, getWorkProfileUserHandle());
-  }
-
-  // TODO(160147511): Remove use of service calls for versions after R
-  /**
-   * Turn off the work profile
-   *
-   * <p>This uses {@link ServiceCall} and so is only guaranteed to work correctly on AOSP.
-   *
-   * @see #turnOffWorkProfileAndWait()
-   */
-  public void turnOffWorkProfile() {
-    if (VERSION.SDK_INT == VERSION_CODES.R) {
-      runCommandWithOutput(
-          R_TURN_OFF_WORK_PROFILE_COMMAND
-              .prepare()
-              .setInt(USER_ID_KEY, getWorkProfileUserId())
-              .getCommand());
-    } else if (VERSION.SDK_INT == VERSION_CODES.Q || VERSION.SDK_INT == VERSION_CODES.P) {
-      runCommandWithOutput(
-          TURN_OFF_WORK_PROFILE_COMMAND
-              .prepare()
-              .setInt(USER_ID_KEY, getWorkProfileUserId())
-              .getCommand());
-    } else {
-      throw new IllegalStateException("Cannot turn off work on this version of android");
-    }
-  }
-
-  /**
    * Turn on the work profile and block until it has been turned on.
    *
    * <p>This uses {@link ServiceCall} and so is only guaranteed to work correctly on AOSP.
@@ -258,34 +169,42 @@ public class InstrumentedTestUtilities {
 
     turnOnWorkProfile();
 
-    ProfileAvailabilityPoll.blockUntilProfileRunningAndUnlocked(
-        context, getWorkProfileUserHandle());
+    ProfileAvailabilityPoll.blockUntilUserRunningAndUnlocked(context, getWorkProfileUserHandle());
   }
 
-  // TODO(160147511): Remove use of service calls for versions after R
   /**
-   * Turn on the work profile and block until it has been turned on.
+   * Turn on the work profile.
    *
    * <p>This uses {@link ServiceCall} and so is only guaranteed to work correctly on AOSP.
    *
    * @see #turnOnWorkProfileAndWait()
    */
   public void turnOnWorkProfile() {
-    if (VERSION.SDK_INT == VERSION_CODES.R) {
-      runCommandWithOutput(
-          R_TURN_ON_WORK_PROFILE_COMMAND
-              .prepare()
-              .setInt(USER_ID_KEY, getWorkProfileUserId())
-              .getCommand());
-    } else if (VERSION.SDK_INT == VERSION_CODES.Q || VERSION.SDK_INT == VERSION_CODES.P) {
-      runCommandWithOutput(
-          TURN_ON_WORK_PROFILE_COMMAND
-              .prepare()
-              .setInt(USER_ID_KEY, getWorkProfileUserId())
-              .getCommand());
-    } else {
-      throw new IllegalStateException("Cannot turn on work on this version of android");
-    }
+    UserAndProfileTestUtilities.turnOnUser(getWorkProfileUserId());
+  }
+
+  /**
+   * Turn off the work profile and block until it has been turned off.
+   *
+   * <p>This uses {@link ServiceCall} and so is only guaranteed to work correctly on AOSP.
+   *
+   * @see #turnOffWorkProfile()
+   */
+  public void turnOffWorkProfileAndWait() {
+    turnOffWorkProfile();
+
+    ProfileAvailabilityPoll.blockUntilUserNotAvailable(context, getWorkProfileUserHandle());
+  }
+
+  /**
+   * Turn off the work profile.
+   *
+   * <p>This uses {@link ServiceCall} and so is only guaranteed to work correctly on AOSP.
+   *
+   * @see #turnOffWorkProfileAndWait()
+   */
+  public void turnOffWorkProfile() {
+    UserAndProfileTestUtilities.turnOffUser(getWorkProfileUserId());
   }
 
   /**
@@ -305,49 +224,20 @@ public class InstrumentedTestUtilities {
   }
 
   /**
-   * Manually call {@link ProfileConnector#startConnecting()} and wait for connection to be
+   * Call {@link ProfileConnector#addConnectionHolder(Object)} ()} and wait for connection to be
    * complete.
    */
-  public void manuallyConnectAndWait() {
-    connector.startConnecting();
+  public ProfileConnectionHolder addConnectionHolderAndWait(Object connectionHolder) {
+    ProfileConnectionHolder p = connector.addConnectionHolder(connectionHolder);
     waitForConnected();
+    return p;
   }
 
-  private static final Pattern CREATE_USER_PATTERN =
-      Pattern.compile("Success: created user id (\\d+)");
-
   public int createUser(String username) {
-    String output = runCommandWithOutput("pm create-user " + username);
-
-    Matcher userMatcher = CREATE_USER_PATTERN.matcher(output);
-    if (userMatcher.find()) {
-      return Integer.parseInt(userMatcher.group(1));
-    }
-
-    throw new IllegalStateException("Could not create user. Output: " + output);
+    return UserAndProfileTestUtilities.createUser(username);
   }
 
   public void startUser(int userId) {
-    UserHandle userHandle = SharedTestUtilities.getUserHandleForUserId(userId);
-    InstrumentedTestUtilities.runCommandWithOutput("am start-user " + userId);
-    ProfileAvailabilityPoll.blockUntilProfileRunningAndUnlocked(context, userHandle);
-  }
-
-  private static String runCommandWithOutput(String command) {
-    ParcelFileDescriptor p = runCommand(command);
-
-    InputStream inputStream = new FileInputStream(p.getFileDescriptor());
-
-    try (Scanner scanner = new Scanner(inputStream, UTF_8.name())) {
-      return scanner.useDelimiter("\\A").next();
-    } catch (NoSuchElementException e) {
-      return "";
-    }
-  }
-
-  private static ParcelFileDescriptor runCommand(String command) {
-    return InstrumentationRegistry.getInstrumentation()
-        .getUiAutomation()
-        .executeShellCommand(command);
+    UserAndProfileTestUtilities.startUserAndBlock(context, userId);
   }
 }

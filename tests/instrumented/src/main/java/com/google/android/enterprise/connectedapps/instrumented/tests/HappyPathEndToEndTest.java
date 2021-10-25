@@ -29,6 +29,7 @@ import com.google.android.enterprise.connectedapps.testapp.types.ProfileTestCros
 import com.google.android.enterprise.connectedapps.testing.BlockingPoll;
 import java.util.concurrent.ExecutionException;
 import org.junit.After;
+import org.junit.AfterClass;
 import org.junit.Before;
 import org.junit.Test;
 import org.junit.runner.RunWith;
@@ -46,8 +47,8 @@ public class HappyPathEndToEndTest {
 
   private static final String STRING = "String";
 
-  private final TestProfileConnector connector = TestProfileConnector.create(context);
-  private final InstrumentedTestUtilities utilities =
+  private static final TestProfileConnector connector = TestProfileConnector.create(context);
+  private static final InstrumentedTestUtilities utilities =
       new InstrumentedTestUtilities(context, connector);
   private final ProfileTestCrossProfileType type = ProfileTestCrossProfileType.create(connector);
   private final ProfileTestCrossProfileTypeWhichNeedsContext typeWithContext =
@@ -60,8 +61,13 @@ public class HappyPathEndToEndTest {
 
   @After
   public void teardown() {
-    connector.stopManualConnectionManagement();
+    connector.clearConnectionHolders();
     utilities.waitForDisconnected();
+  }
+
+  @AfterClass
+  public static void teardownClass() {
+    utilities.ensureNoWorkProfile();
   }
 
   @Test
@@ -71,7 +77,7 @@ public class HappyPathEndToEndTest {
 
   @Test
   public void isConnected_isFalse() {
-    connector.stopManualConnectionManagement();
+    connector.clearConnectionHolders();
     utilities.waitForDisconnected();
 
     assertThat(connector.isConnected()).isFalse();
@@ -79,14 +85,14 @@ public class HappyPathEndToEndTest {
 
   @Test
   public void isConnected_hasConnected_isTrue() {
-    utilities.manuallyConnectAndWait();
+    utilities.addConnectionHolderAndWait(this);
 
     assertThat(connector.isConnected()).isTrue();
   }
 
   @Test
   public void synchronousMethod_resultIsCorrect() throws UnavailableProfileException {
-    utilities.manuallyConnectAndWait();
+    utilities.addConnectionHolderAndWait(this);
 
     assertThat(type.other().identityStringMethod(STRING)).isEqualTo(STRING);
   }
@@ -110,7 +116,7 @@ public class HappyPathEndToEndTest {
   @Test
   public void synchronousMethod_fromOtherProfile_resultIsCorrect()
       throws UnavailableProfileException {
-    utilities.manuallyConnectAndWait();
+    utilities.addConnectionHolderAndWait(this);
     typeWithContext.other().connectToOtherProfile();
     BlockingPoll.poll(
         () -> {

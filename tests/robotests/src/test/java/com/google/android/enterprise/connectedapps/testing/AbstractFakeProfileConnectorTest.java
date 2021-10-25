@@ -22,10 +22,12 @@ import android.content.Context;
 import android.os.Build.VERSION_CODES;
 import androidx.test.core.app.ApplicationProvider;
 import com.google.android.enterprise.connectedapps.ConnectedAppsUtils;
+import com.google.android.enterprise.connectedapps.ProfileConnectionHolder;
 import com.google.android.enterprise.connectedapps.TestAvailabilityListener;
 import com.google.android.enterprise.connectedapps.TestConnectionListener;
 import com.google.android.enterprise.connectedapps.annotations.CustomProfileConnector.ProfileType;
 import com.google.android.enterprise.connectedapps.exceptions.UnavailableProfileException;
+import org.junit.After;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.robolectric.RobolectricTestRunner;
@@ -45,43 +47,69 @@ public class AbstractFakeProfileConnectorTest {
       new FakeProfileConnector(context, /* primaryProfileType= */ ProfileType.NONE);
   private final TestAvailabilityListener availabilityListener = new TestAvailabilityListener();
   private final TestConnectionListener connectionListener = new TestConnectionListener();
+  private final Object connectionHolder = new Object();
+
+  @After
+  public void teardown() {
+    fakeProfileConnector.clearConnectionHolders();
+  }
 
   @Test
-  public void startConnecting_connectionIsAvailable_isConnected() {
+  public void addConnectionHolder_connectionIsAvailable_isConnected() {
     fakeProfileConnector.turnOnWorkProfile();
 
-    fakeProfileConnector.startConnecting();
+    fakeProfileConnector.addConnectionHolder(this);
 
     assertThat(fakeProfileConnector.isConnected()).isTrue();
   }
 
   @Test
-  public void startConnecting_connectionIsAvailable_notifiesConnectionChanged() {
-    fakeProfileConnector.turnOnWorkProfile();
-    fakeProfileConnector.registerConnectionListener(connectionListener);
+  public void addConnectionHolder_connectionIsNotAvailable_doesNotConnect() {
+    fakeProfileConnector.turnOffWorkProfile();
+    fakeProfileConnector.addConnectionListener(connectionListener);
 
-    fakeProfileConnector.startConnecting();
+    fakeProfileConnector.addConnectionHolder(this);
+
+    assertThat(fakeProfileConnector.isConnected()).isFalse();
+  }
+
+  @Test
+  public void addConnectionHolder_doesNotHavePermission_doesNotConnect() {
+    fakeProfileConnector.setHasPermissionToMakeCrossProfileCalls(false);
+    fakeProfileConnector.addConnectionListener(connectionListener);
+
+    fakeProfileConnector.addConnectionHolder(this);
+
+    assertThat(fakeProfileConnector.isConnected()).isFalse();
+  }
+
+  @Test
+  public void addConnectionHolder_notifiesConnectionChanged() {
+    fakeProfileConnector.turnOnWorkProfile();
+    fakeProfileConnector.addConnectionListener(connectionListener);
+
+    fakeProfileConnector.addConnectionHolder(this);
 
     assertThat(connectionListener.connectionChangedCount()).isEqualTo(1);
   }
 
   @Test
-  public void startConnecting_unregisteredConnectionListener_doesNotNotifyConnectionChanged() {
+  public void addConnectionHolder_unregisteredConnectionListener_doesNotNotifyConnectionChanged() {
     fakeProfileConnector.turnOnWorkProfile();
-    fakeProfileConnector.registerConnectionListener(connectionListener);
-    fakeProfileConnector.unregisterConnectionListener(connectionListener);
+    fakeProfileConnector.addConnectionListener(connectionListener);
+    fakeProfileConnector.removeConnectionListener(connectionListener);
 
-    fakeProfileConnector.startConnecting();
+    fakeProfileConnector.addConnectionHolder(this);
 
     assertThat(connectionListener.connectionChangedCount()).isEqualTo(0);
   }
 
   @Test
-  public void startConnecting_connectionIsNotAvailable_doesNotNotifyOfConnectionChanged() {
+  public void addConnectionHolder_connectionIsNotAvailable_doesNotNotifyOfConnectionChanged() {
     fakeProfileConnector.removeWorkProfile();
-    fakeProfileConnector.registerConnectionListener(connectionListener);
+    fakeProfileConnector.addConnectionListener(connectionListener);
 
-    fakeProfileConnector.startConnecting();
+    fakeProfileConnector.addConnectionHolder(this);
 
     assertThat(connectionListener.connectionChangedCount()).isEqualTo(0);
   }
@@ -98,7 +126,7 @@ public class AbstractFakeProfileConnectorTest {
   @Test
   public void connect_connectionIsAvailable_notifiesConnectionChanged() throws Exception {
     fakeProfileConnector.turnOnWorkProfile();
-    fakeProfileConnector.registerConnectionListener(connectionListener);
+    fakeProfileConnector.addConnectionListener(connectionListener);
 
     fakeProfileConnector.connect();
 
@@ -109,8 +137,8 @@ public class AbstractFakeProfileConnectorTest {
   public void connect_unregisteredConnectionListener_doesNotNotifyConnectionChanged()
       throws Exception {
     fakeProfileConnector.turnOnWorkProfile();
-    fakeProfileConnector.registerConnectionListener(connectionListener);
-    fakeProfileConnector.unregisterConnectionListener(connectionListener);
+    fakeProfileConnector.addConnectionListener(connectionListener);
+    fakeProfileConnector.removeConnectionListener(connectionListener);
 
     fakeProfileConnector.connect();
 
@@ -120,14 +148,22 @@ public class AbstractFakeProfileConnectorTest {
   @Test
   public void connect_connectionIsNotAvailable_throwsUnavailableProfileException() {
     fakeProfileConnector.removeWorkProfile();
-    fakeProfileConnector.registerConnectionListener(connectionListener);
+    fakeProfileConnector.addConnectionListener(connectionListener);
+
+    assertThrows(UnavailableProfileException.class, fakeProfileConnector::connect);
+  }
+
+  @Test
+  public void connect_doesNotHavePermission_throwsUnavailableProfileException() {
+    fakeProfileConnector.setHasPermissionToMakeCrossProfileCalls(false);
+    fakeProfileConnector.addConnectionListener(connectionListener);
 
     assertThrows(UnavailableProfileException.class, fakeProfileConnector::connect);
   }
 
   @Test
   public void turnOnWorkProfile_workProfileWasOff_notifiesAvailabilityChange() {
-    fakeProfileConnector.registerAvailabilityListener(availabilityListener);
+    fakeProfileConnector.addAvailabilityListener(availabilityListener);
 
     fakeProfileConnector.turnOnWorkProfile();
 
@@ -137,7 +173,7 @@ public class AbstractFakeProfileConnectorTest {
   @Test
   public void turnOnWorkProfile_workProfileWasOn_doesNotNotifyAvailabilityChange() {
     fakeProfileConnector.turnOnWorkProfile();
-    fakeProfileConnector.registerAvailabilityListener(availabilityListener);
+    fakeProfileConnector.addAvailabilityListener(availabilityListener);
 
     fakeProfileConnector.turnOnWorkProfile();
 
@@ -147,7 +183,7 @@ public class AbstractFakeProfileConnectorTest {
   @Test
   public void turnOffWorkProfile_workProfileWasOn_notifiesAvailabilityChange() {
     fakeProfileConnector.turnOnWorkProfile();
-    fakeProfileConnector.registerAvailabilityListener(availabilityListener);
+    fakeProfileConnector.addAvailabilityListener(availabilityListener);
 
     fakeProfileConnector.turnOffWorkProfile();
 
@@ -157,7 +193,7 @@ public class AbstractFakeProfileConnectorTest {
   @Test
   public void turnOffWorkProfile_workProfileWasOff_doesNotNotifyAvailabilityChange() {
     fakeProfileConnector.turnOffWorkProfile();
-    fakeProfileConnector.registerAvailabilityListener(availabilityListener);
+    fakeProfileConnector.addAvailabilityListener(availabilityListener);
 
     fakeProfileConnector.turnOffWorkProfile();
 
@@ -168,7 +204,7 @@ public class AbstractFakeProfileConnectorTest {
   public void turnOffWorkProfile_wasConnected_notifiesConnectionChange() throws Exception {
     fakeProfileConnector.turnOnWorkProfile();
     fakeProfileConnector.connect();
-    fakeProfileConnector.registerConnectionListener(connectionListener);
+    fakeProfileConnector.addConnectionListener(connectionListener);
 
     fakeProfileConnector.turnOffWorkProfile();
 
@@ -357,38 +393,28 @@ public class AbstractFakeProfileConnectorTest {
   }
 
   @Test
-  public void isManuallyManagingConnection_returnsFalse() {
-    assertThat(fakeProfileConnector.isManuallyManagingConnection()).isFalse();
-  }
-
-  @Test
-  public void isManuallyManagingConnection_hasStartedManuallyConnecting_returnsTrue() {
-    fakeProfileConnector.startConnecting();
-
-    assertThat(fakeProfileConnector.isManuallyManagingConnection()).isTrue();
-  }
-
-  @Test
-  public void isManuallyManagingConnection_hasManuallyConnected_returnsTrue() throws Exception {
+  public void timeoutConnection_hasNoConnectionHolders_disconnects() {
     fakeProfileConnector.turnOnWorkProfile();
-    fakeProfileConnector.connect();
+    fakeProfileConnector.clearConnectionHolders();
 
-    assertThat(fakeProfileConnector.isManuallyManagingConnection()).isTrue();
+    fakeProfileConnector.timeoutConnection();
+
+    assertThat(fakeProfileConnector.isConnected()).isFalse();
   }
 
   @Test
-  public void isManuallyManagingConnection_hasCalledStopManualConnectionManagement_returnsFalse() {
-    fakeProfileConnector.startConnecting();
-
-    fakeProfileConnector.stopManualConnectionManagement();
-
-    assertThat(fakeProfileConnector.isManuallyManagingConnection()).isFalse();
-  }
-
-  @Test
-  public void timeoutConnection_isManuallyManagingConnection_doesNotDisconnect() throws Exception {
+  public void addConnectionHolder_connects() {
     fakeProfileConnector.turnOnWorkProfile();
-    fakeProfileConnector.connect();
+
+    fakeProfileConnector.addConnectionHolder(this);
+
+    assertThat(fakeProfileConnector.isConnected()).isTrue();
+  }
+
+  @Test
+  public void timeoutConnection_hasConnectionHolder_doesNotDisconnect() {
+    fakeProfileConnector.turnOnWorkProfile();
+    fakeProfileConnector.addConnectionHolder(this);
 
     fakeProfileConnector.timeoutConnection();
 
@@ -396,9 +422,55 @@ public class AbstractFakeProfileConnectorTest {
   }
 
   @Test
-  public void timeoutConnection_isNotManuallyManagingConnection_disconnects() {
+  public void removeConnectionHolder_lastConnectionHolder_doesNotDisconnect() {
     fakeProfileConnector.turnOnWorkProfile();
-    fakeProfileConnector.stopManualConnectionManagement();
+    fakeProfileConnector.addConnectionHolder(this);
+
+    fakeProfileConnector.removeConnectionHolder(this);
+
+    assertThat(fakeProfileConnector.isConnected()).isTrue();
+  }
+
+  @Test
+  public void removeConnectionHolder_timeout_disconnects() {
+    fakeProfileConnector.turnOnWorkProfile();
+    fakeProfileConnector.addConnectionHolder(this);
+    fakeProfileConnector.removeConnectionHolder(this);
+
+    fakeProfileConnector.timeoutConnection();
+
+    assertThat(fakeProfileConnector.isConnected()).isFalse();
+  }
+
+  @Test
+  public void removeConnectionHolder_stillAnotherConnectionHolder_timeout_doesNotDisconnect() {
+    fakeProfileConnector.turnOnWorkProfile();
+    fakeProfileConnector.addConnectionHolder(this);
+    fakeProfileConnector.addConnectionHolder(connectionHolder);
+    fakeProfileConnector.removeConnectionHolder(this);
+
+    fakeProfileConnector.timeoutConnection();
+
+    assertThat(fakeProfileConnector.isConnected()).isTrue();
+  }
+
+  @Test
+  public void removeConnectionHolder_removingAlias_timeout_disconnects() {
+    fakeProfileConnector.turnOnWorkProfile();
+    fakeProfileConnector.addConnectionHolder(this);
+    fakeProfileConnector.addConnectionHolderAlias(connectionHolder, this);
+    fakeProfileConnector.removeConnectionHolder(connectionHolder);
+
+    fakeProfileConnector.timeoutConnection();
+
+    assertThat(fakeProfileConnector.isConnected()).isFalse();
+  }
+
+  @Test
+  public void removeConnectionHolder_removingWrapper_timeout_disconnects() {
+    fakeProfileConnector.turnOnWorkProfile();
+    ProfileConnectionHolder connectionHolder = fakeProfileConnector.addConnectionHolder(this);
+    fakeProfileConnector.removeConnectionHolder(connectionHolder);
 
     fakeProfileConnector.timeoutConnection();
 

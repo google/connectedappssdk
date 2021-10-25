@@ -15,16 +15,17 @@
  */
 package com.google.android.enterprise.connectedapps.internal;
 
+import android.os.Bundle;
 import android.os.RemoteException;
 import com.google.android.enterprise.connectedapps.ICrossProfileCallback;
 
-/** Implementation of {@link ParcelCallSender} used when passing a callback return value. */
-public class CrossProfileCallbackParcelCallSender extends ParcelCallSender {
+/** Implementation of {@link BundleCallSender} used when passing a callback return value. */
+public class CrossProfileCallbackBundleCallSender extends BundleCallSender {
 
   private final ICrossProfileCallback callback;
   private final int methodIdentifier;
 
-  public CrossProfileCallbackParcelCallSender(
+  public CrossProfileCallbackBundleCallSender(
       ICrossProfileCallback callback, int methodIdentifier) {
     if (callback == null) {
       throw new NullPointerException("callback must not be null");
@@ -39,6 +40,11 @@ public class CrossProfileCallbackParcelCallSender extends ParcelCallSender {
     callback.prepareResult(callId, blockId, totalBytes, bytes);
   }
 
+  @Override
+  void prepareBundle(long callId, int bundleId, Bundle bundle) throws RemoteException {
+    callback.prepareBundle(callId, bundleId, bundle);
+  }
+
   /**
    * Relays to {@link ICrossProfileCallback#onResult(long, int, int, byte[])}.
    *
@@ -51,11 +57,18 @@ public class CrossProfileCallbackParcelCallSender extends ParcelCallSender {
   }
 
   /**
-   * Callbacks cannot themselves return values, so this method will always throw an {@link
-   * IllegalStateException}.
+   * Always throw an {@link IllegalStateException} as callbacks cannot themselves return values.
    */
   @Override
   byte[] fetchResponse(long callId, int blockId) throws RemoteException {
+    throw new IllegalStateException();
+  }
+
+  /**
+   * Always throw an {@link IllegalStateException} as callbacks cannot themselves return values.
+   */
+  @Override
+  Bundle fetchResponseBundle(long callId, int bundleId) throws RemoteException {
     throw new IllegalStateException();
   }
 }

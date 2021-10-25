@@ -92,8 +92,24 @@ public class TypeUtils {
     return CodeBlock.of("$T.of($S)", BUNDLER_TYPE_CLASSNAME, getRawTypeQualifiedName(type));
   }
 
+  static TypeMirror getArrayRootType(TypeMirror type) {
+    while (TypeUtils.isArray(type)) {
+      type = TypeUtils.extractTypeFromArray(type);
+    }
+
+    return type;
+  }
+
+  static boolean isPrimitiveArray(TypeMirror type) {
+    return getArrayRootType(type).getKind().isPrimitive();
+  }
+
   private static CodeBlock generateArrayBundlerType(TypeMirror type) {
     TypeMirror arrayType = extractTypeFromArray(type);
+
+    if (isPrimitiveArray(arrayType)) {
+      return CodeBlock.of("$T.of($S)", BUNDLER_TYPE_CLASSNAME, type);
+    }
 
     return CodeBlock.of(
         "$T.of($S, $L)",

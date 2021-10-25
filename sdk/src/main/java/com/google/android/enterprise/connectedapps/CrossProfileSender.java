@@ -17,6 +17,9 @@ package com.google.android.enterprise.connectedapps;
 
 import static com.google.android.enterprise.connectedapps.CrossProfileSDKUtilities.filterUsersByAvailabilityRestrictions;
 import static com.google.android.enterprise.connectedapps.CrossProfileSDKUtilities.selectUserHandleToBind;
+import static java.util.concurrent.TimeUnit.MILLISECONDS;
+import static java.util.concurrent.TimeUnit.MINUTES;
+import static java.util.concurrent.TimeUnit.SECONDS;
 
 import android.content.BroadcastReceiver;
 import android.content.ComponentName;
@@ -27,9 +30,9 @@ import android.content.ServiceConnection;
 import android.content.pm.CrossProfileApps;
 import android.os.Build.VERSION;
 import android.os.Build.VERSION_CODES;
+import android.os.Bundle;
 import android.os.IBinder;
 import android.os.Looper;
-import android.os.Parcel;
 import android.os.UserHandle;
 import android.os.UserManager;
 import android.util.Log;
@@ -37,37 +40,44 @@ import com.google.android.enterprise.connectedapps.annotations.AvailabilityRestr
 import com.google.android.enterprise.connectedapps.exceptions.MissingApiException;
 import com.google.android.enterprise.connectedapps.exceptions.ProfileRuntimeException;
 import com.google.android.enterprise.connectedapps.exceptions.UnavailableProfileException;
-import com.google.android.enterprise.connectedapps.internal.CrossProfileParcelCallSender;
-import com.google.android.enterprise.connectedapps.internal.ParcelCallReceiver;
-import com.google.android.enterprise.connectedapps.internal.ParcelUtilities;
+import com.google.android.enterprise.connectedapps.internal.BundleCallReceiver;
+import com.google.android.enterprise.connectedapps.internal.BundleUtilities;
+import com.google.android.enterprise.connectedapps.internal.Bundler;
+import com.google.android.enterprise.connectedapps.internal.CrossProfileBundleCallSender;
 import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.Collections;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
+import java.util.Set;
+import java.util.WeakHashMap;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentLinkedDeque;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.ScheduledFuture;
-import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
 import org.checkerframework.checker.nullness.qual.Nullable;
 
-/** This class is used internally by the Connected Apps SDK to send messages cross-profile. */
-public class CrossProfileSender {
+/**
+ * This class is used internally by the Connected Apps SDK to send messages across users and
+ * profiles.
+ */
+public final class CrossProfileSender {
 
-  private static final class CrossProfileCall {
+  private static final class CrossProfileCall implements ExceptionCallback {
     private final long crossProfileTypeIdentifier;
     private final int methodIdentifier;
-    private final Parcel params;
+    private final Bundle params;
     private final LocalCallback callback;
-    private final long timeoutMillis;
 
     CrossProfileCall(
         long crossProfileTypeIdentifier,
         int methodIdentifier,
-        Parcel params,
-        LocalCallback callback,
-        long timeoutMillis) {
+        Bundle params,
+        LocalCallback callback) {
       if (params == null || callback == null) {
         throw new NullPointerException();
       }
@@ -75,15 +85,10 @@ public class CrossProfileSender {
       this.methodIdentifier = methodIdentifier;
       this.params = params;
       this.callback = callback;
-      this.timeoutMillis = timeoutMillis;
-    }
-
-    void recycle() {
-      params.recycle();
     }
 
     @Override
-    public boolean equals(Object o) {
+    public boolean equals(@Nullable Object o) {
       if (this == o) {
         return true;
       }
@@ -94,108 +99,70 @@ public class CrossProfileSender {
       return crossProfileTypeIdentifier == that.crossProfileTypeIdentifier
           && methodIdentifier == that.methodIdentifier
           && params.equals(that.params)
-          && callback.equals(that.callback)
-          && timeoutMillis == that.timeoutMillis;
+          && callback.equals(that.callback);
     }
 
     @Override
     public int hashCode() {
-      return Objects.hash(
-          crossProfileTypeIdentifier, methodIdentifier, params, callback, timeoutMillis);
+      return Objects.hash(crossProfileTypeIdentifier, methodIdentifier, params, callback);
+    }
+
+    @Override
+    public void onException(Throwable throwable) {
+      callback.onException(createThrowableBundle(throwable));
     }
   }
 
   private static final class OngoingCrossProfileCall extends ICrossProfileCallback.Stub {
 
     private final CrossProfileSender sender;
-    private final LocalCallback originalCallback;
-    private final AtomicBoolean complete = new AtomicBoolean(false);
-    private ScheduledFuture<?> timeoutFuture;
-    private final long timeoutMillis;
-    private final ParcelCallReceiver parcelCallReceiver = new ParcelCallReceiver();
+    private final CrossProfileCall call;
+    private final BundleCallReceiver bundleCallReceiver = new BundleCallReceiver();
 
-    private OngoingCrossProfileCall(
-        CrossProfileSender sender, LocalCallback originalCallback, long timeoutMillis) {
-      if (sender == null || originalCallback == null) {
+    private OngoingCrossProfileCall(CrossProfileSender sender, CrossProfileCall call) {
+      if (sender == null || call == null) {
         throw new NullPointerException();
       }
       this.sender = sender;
-      this.originalCallback = originalCallback;
-      this.timeoutMillis = timeoutMillis;
-    }
-
-    void scheduleTimeout(ScheduledExecutorService timeoutExecutor) {
-      if (this.timeoutFuture != null) {
-        throw new IllegalStateException("Each call can only have a single timeout scheduled.");
-      }
-      if (complete.get()) {
-        return;
-      }
-      this.timeoutFuture =
-          timeoutExecutor.schedule(this::onTimeout, timeoutMillis, TimeUnit.MILLISECONDS);
-    }
-
-    private void onTimeout() {
-      if (complete.get()) {
-        return;
-      }
-      Parcel throwableParcel =
-          createThrowableParcel(
-              new UnavailableProfileException(
-                  "The call timed out after " + timeoutMillis + " milliseconds"));
-
-      onException(throwableParcel);
-      throwableParcel.recycle();
+      this.call = call;
     }
 
     @Override
     public void prepareResult(long callId, int blockId, int numBytes, byte[] params) {
-      parcelCallReceiver.prepareCall(callId, blockId, numBytes, params);
+      bundleCallReceiver.prepareCall(callId, blockId, numBytes, params);
+    }
+
+    @Override
+    public void prepareBundle(long callId, int bundleId, Bundle bundle) {
+      bundleCallReceiver.prepareBundle(callId, bundleId, bundle);
     }
 
     @Override
     public void onResult(long callId, int blockId, int methodIdentifier, byte[] paramsBytes) {
-      if (complete.getAndSet(true)) {
-        return;
-      }
-      if (timeoutFuture != null) {
-        timeoutFuture.cancel(/* mayInterruptIfRunning= */ true);
-      }
-      sender.ongoingCallComplete(this);
+      sender.removeConnectionHolder(call);
 
-      Parcel parcel = parcelCallReceiver.getPreparedCall(callId, blockId, paramsBytes);
+      Bundle bundle = bundleCallReceiver.getPreparedCall(callId, blockId, paramsBytes);
 
-      originalCallback.onResult(methodIdentifier, parcel);
-      parcel.recycle();
-
-      sender.maybeScheduleAutomaticDisconnection();
+      call.callback.onResult(methodIdentifier, bundle);
     }
 
     @Override
     public void onException(long callId, int blockId, byte[] paramsBytes) {
-      Parcel parcel = parcelCallReceiver.getPreparedCall(callId, blockId, paramsBytes);
+      Bundle bundle = bundleCallReceiver.getPreparedCall(callId, blockId, paramsBytes);
 
-      onException(parcel);
-
-      parcel.recycle();
+      onException(bundle);
     }
 
-    public void onException(Parcel exception) {
-      if (complete.getAndSet(true)) {
-        return;
-      }
-      if (timeoutFuture != null) {
-        timeoutFuture.cancel(/* mayInterruptIfRunning= */ true);
-      }
-      sender.ongoingCallComplete(this);
+    public void onException(Bundle exception) {
+      sender.removeConnectionHolder(call);
 
-      originalCallback.onException(exception);
+      call.callback.onException(exception);
 
-      sender.maybeScheduleAutomaticDisconnection();
+      sender.scheduledExecutorService.execute(sender::maybeScheduleAutomaticDisconnection);
     }
 
     @Override
-    public boolean equals(Object o) {
+    public boolean equals(@Nullable Object o) {
       if (this == o) {
         return true;
       }
@@ -203,20 +170,17 @@ public class CrossProfileSender {
         return false;
       }
       OngoingCrossProfileCall that = (OngoingCrossProfileCall) o;
-      return sender.equals(that.sender)
-          && originalCallback.equals(that.originalCallback)
-          && complete.equals(that.complete);
+      return sender.equals(that.sender) && call.equals(that.call);
     }
 
     @Override
     public int hashCode() {
-      return Objects.hash(sender, originalCallback, complete);
+      return Objects.hash(sender, call);
     }
   }
 
-  private void ongoingCallComplete(OngoingCrossProfileCall call) {
-    ongoingCrossProfileCalls.removeFirstOccurrence(call);
-  }
+  // Temporary variable until deprecated methods are removed
+  public static final Object MANUAL_MANAGEMENT_CONNECTION_HOLDER = new Object();
 
   public static final int MAX_BYTES_PER_BLOCK = 250000;
 
@@ -224,33 +188,113 @@ public class CrossProfileSender {
   private static final long INITIAL_BIND_RETRY_DELAY_MS = 500;
   private static final int DEFAULT_AUTOMATIC_DISCONNECTION_TIMEOUT_SECONDS = 30;
 
-  private final ScheduledExecutorService scheduledExecutorService;
-  private final Context context;
-  private final ComponentName bindToService;
-  private boolean canUseReflectedApis;
-  private long bindRetryDelayMs = 500;
-  private AtomicBoolean isBinding = new AtomicBoolean(false);
-  private final AtomicReference<ICrossProfileService> iCrossProfileService =
-      new AtomicReference<>();
-  private final ConnectionListener connectionListener;
-  private final AvailabilityListener availabilityListener;
-  private final ConnectionBinder binder;
-  @Nullable private volatile ScheduledFuture<Void> automaticDisconnectionFuture;
-  private final AvailabilityRestrictions availabilityRestrictions;
-
-  private boolean isManuallyManagingConnection = false;
-  private ConcurrentLinkedDeque<OngoingCrossProfileCall> ongoingCrossProfileCalls =
-      new ConcurrentLinkedDeque<>();
-  private ConcurrentLinkedDeque<CrossProfileCall> asyncCallQueue = new ConcurrentLinkedDeque<>();
-
   private static final int NONE = 0;
   private static final int UNAVAILABLE = 1;
   private static final int AVAILABLE = 2;
   private static final int DISCONNECTED = UNAVAILABLE;
   private static final int CONNECTED = AVAILABLE;
 
-  private ScheduledFuture<?> scheduledTryBind;
+  private final ScheduledExecutorService scheduledExecutorService;
+  private final Context context;
+  private final ComponentName bindToService;
+  private final boolean canUseReflectedApis;
+  private final ConnectionListener connectionListener;
+  private final AvailabilityListener availabilityListener;
+  private final ConnectionBinder binder;
+  private final AvailabilityRestrictions availabilityRestrictions;
 
+  private final AtomicReference<@Nullable ICrossProfileService> iCrossProfileService =
+      new AtomicReference<>();
+  private final AtomicReference<@Nullable ScheduledFuture<?>> scheduledTryBind =
+      new AtomicReference<>();
+  private final AtomicReference<ScheduledFuture<?>> scheduledBindTimeout = new AtomicReference<>();
+
+  // Interaction with explicitConnectionHolders, connectionHolders, and connectionHolderAliases must
+  //  take place on the scheduled executor thread
+  private final Set<Object> explicitConnectionHolders =
+      Collections.newSetFromMap(new WeakHashMap<>());
+  private final Set<Object> connectionHolders = Collections.newSetFromMap(new WeakHashMap<>());
+  private final Map<Object, Set<Object>> connectionHolderAliases = new WeakHashMap<>();
+  private final Set<ExceptionCallback> unavailableProfileExceptionWatchers =
+      Collections.newSetFromMap(new ConcurrentHashMap<>());
+  private final ConcurrentLinkedDeque<CrossProfileCall> asyncCallQueue =
+      new ConcurrentLinkedDeque<>();
+  // This will be updated when we interact with explicitConnectionHolders - it won't be in-sync if
+  // explicitConnectionHolders is emptied by the garbage collector but that won't cause issues
+  private final AtomicBoolean explicitConnectionHoldersIsEmpty = new AtomicBoolean(true);
+
+  private final BroadcastReceiver profileAvailabilityReceiver =
+      new BroadcastReceiver() {
+        @Override
+        public void onReceive(Context context, Intent intent) {
+          scheduledExecutorService.execute(CrossProfileSender.this::checkAvailability);
+        }
+      };
+
+  private final ServiceConnection connection =
+      new ServiceConnection() {
+
+        @Override
+        public void onBindingDied(ComponentName name) {
+          Log.e(LOG_TAG, "onBindingDied for component " + name);
+          attemptReconnect();
+        }
+
+        @Override
+        public void onNullBinding(ComponentName name) {
+          Log.e(LOG_TAG, "onNullBinding for component " + name);
+          // We don't expect this is salvageable but it will fail the reconnect anyway
+          attemptReconnect();
+        }
+
+        // Called when the connection with the service is established
+        @Override
+        public void onServiceConnected(ComponentName name, IBinder service) {
+          Log.i(LOG_TAG, "onServiceConnected for component " + name);
+          scheduledExecutorService.execute(
+              () -> {
+                if (connectionHolders.isEmpty()) {
+                  Log.i(LOG_TAG, "Connected but no holders. Disconnecting.");
+                  unbind();
+                  return;
+                }
+                iCrossProfileService.set(ICrossProfileService.Stub.asInterface(service));
+
+                tryMakeAsyncCalls();
+                checkConnected();
+                onBindingAttemptSucceeded();
+              });
+        }
+
+        // Called when the connection with the service disconnects unexpectedly
+        @Override
+        public void onServiceDisconnected(ComponentName name) {
+          Log.e(LOG_TAG, "Unexpected disconnection for component " + name);
+          attemptReconnect();
+        }
+
+        private void attemptReconnect() {
+          scheduledExecutorService.execute(
+              () -> {
+                unbind();
+                throwUnavailableException(
+                    new UnavailableProfileException("Lost connection to other profile"));
+                // These disconnections can be temporary - so to avoid an exception on an async
+                // call leading to bad user experience - we send the availability update again
+                // to prompt a retry/refresh
+                updateAvailability();
+                checkConnected();
+                cancelAutomaticDisconnection();
+                bind();
+              });
+        }
+      };
+
+  private final AtomicReference<ScheduledFuture<Void>> automaticDisconnectionFuture =
+      new AtomicReference<>();
+  private volatile @Nullable CountDownLatch manuallyBindLatch;
+
+  private long bindRetryDelayMs = INITIAL_BIND_RETRY_DELAY_MS;
   private int lastReportedAvailabilityStatus = NONE;
   private int lastReportedConnectedStatus = NONE;
 
@@ -279,92 +323,33 @@ public class CrossProfileSender {
     this.availabilityRestrictions = availabilityRestrictions;
   }
 
-  private final BroadcastReceiver profileAvailabilityReceiver =
-      new BroadcastReceiver() {
-        @Override
-        public void onReceive(Context context, Intent intent) {
-          checkAvailability();
-        }
-      };
-
-  private final ServiceConnection connection =
-      new ServiceConnection() {
-        // Called when the connection with the service is established
-        @Override
-        public void onServiceConnected(ComponentName className, IBinder service) {
-          scheduledExecutorService.execute(
-              () -> {
-                if (!isBinding.get()) {
-                  unbind();
-                  return;
-                }
-                iCrossProfileService.set(ICrossProfileService.Stub.asInterface(service));
-
-                tryMakeAsyncCalls();
-                checkConnected();
-                onBindingAttemptSucceeded();
-              });
-        }
-
-        // Called when the connection with the service disconnects unexpectedly
-        @Override
-        public void onServiceDisconnected(ComponentName className) {
-          scheduledExecutorService.execute(
-              () -> {
-                Log.e(LOG_TAG, "Unexpected disconnection");
-                if (!asyncCallQueue.isEmpty() || !ongoingCrossProfileCalls.isEmpty()) {
-                  Log.d(LOG_TAG, "Found in progress calls");
-                  throwExceptionForAsyncCalls(
-                      new UnavailableProfileException("Lost connection to other profile"));
-                  // These disconnections can be temporary - so to avoid an exception on an async
-                  // call leading to bad user experience - we send the availability update again
-                  // to prompt a retry/refresh
-                  updateAvailability();
-                }
-                iCrossProfileService.set(null);
-                checkConnected();
-                cancelAutomaticDisconnection();
-                startTryBinding();
-              });
-        }
-      };
-
-  private final Object automaticDisconnectionFutureLock = new Object();
-
   private void cancelAutomaticDisconnection() {
-    if (automaticDisconnectionFuture != null) {
-      synchronized (automaticDisconnectionFutureLock) {
-        if (automaticDisconnectionFuture != null) {
-          automaticDisconnectionFuture.cancel(/* mayInterruptIfRunning= */ true);
-          automaticDisconnectionFuture = null;
-        }
-      }
+    ScheduledFuture<?> disconnectionFuture = automaticDisconnectionFuture.getAndSet(null);
+    if (disconnectionFuture != null) {
+      disconnectionFuture.cancel(/* mayInterruptIfRunning= */ true);
     }
   }
 
   private void maybeScheduleAutomaticDisconnection() {
-    if (!isManuallyManagingConnection
-        && asyncCallQueue.isEmpty()
-        && ongoingCrossProfileCalls.isEmpty()
-        && isBound()
-        && automaticDisconnectionFuture == null) {
-      synchronized (automaticDisconnectionFutureLock) {
-        if (automaticDisconnectionFuture == null) {
-          automaticDisconnectionFuture =
-              scheduledExecutorService.schedule(
-                  this::automaticallyDisconnect,
-                  DEFAULT_AUTOMATIC_DISCONNECTION_TIMEOUT_SECONDS,
-                  TimeUnit.SECONDS);
-        }
+    // Always called on scheduled executor service thread
+    if (connectionHolders.isEmpty() && isBound()) {
+      Log.i(LOG_TAG, "Scheduling automatic disconnection");
+      ScheduledFuture<Void> scheduledDisconnection =
+          scheduledExecutorService.schedule(
+              this::automaticallyDisconnect,
+              DEFAULT_AUTOMATIC_DISCONNECTION_TIMEOUT_SECONDS,
+              SECONDS);
+
+      if (!automaticDisconnectionFuture.compareAndSet(null, scheduledDisconnection)) {
+        Log.i(LOG_TAG, "Already scheduled");
+        scheduledDisconnection.cancel(/* mayInterruptIfRunning= */ true);
       }
     }
   }
 
   private Void automaticallyDisconnect() {
-    if (!isManuallyManagingConnection
-        && asyncCallQueue.isEmpty()
-        && ongoingCrossProfileCalls.isEmpty()
-        && isBound()) {
+    // Always called on scheduled executor service thread
+    if (connectionHolders.isEmpty() && isBound()) {
       unbind();
     }
     return null;
@@ -378,9 +363,7 @@ public class CrossProfileSender {
     context.registerReceiver(profileAvailabilityReceiver, filter);
   }
 
-  private volatile CountDownLatch manuallyBindLatch;
-
-  void manuallyBind() throws UnavailableProfileException {
+  void manuallyBind(Object connectionHolder) throws UnavailableProfileException {
     Log.e(LOG_TAG, "Calling manuallyBind");
     if (isRunningOnUIThread()) {
       throw new IllegalStateException("connect()/manuallyBind() cannot be called from UI thread");
@@ -395,7 +378,13 @@ public class CrossProfileSender {
     }
 
     cancelAutomaticDisconnection();
-    isManuallyManagingConnection = true;
+
+    scheduledExecutorService.execute(
+        () -> {
+          explicitConnectionHolders.add(connectionHolder);
+          explicitConnectionHoldersIsEmpty.set(false);
+          connectionHolders.add(connectionHolder);
+        });
 
     if (isBound()) {
       // If we're already bound there's no need to block the thread
@@ -422,8 +411,8 @@ public class CrossProfileSender {
     }
 
     if (!isBound()) {
-      unbind(); // ensure we don't continue trying to connect if we throw an exception
-      isManuallyManagingConnection = false;
+      unbind();
+      scheduledExecutorService.execute(() -> removeConnectionHolderAndAliases(connectionHolder));
       throw new UnavailableProfileException("Profile not available");
     }
   }
@@ -432,62 +421,53 @@ public class CrossProfileSender {
     return Looper.myLooper() == Looper.getMainLooper();
   }
 
-  /**
-   * Start trying to bind to the other profile and start manually managing the connection.
-   *
-   * <p>This will mean that the connection will not be dropped automatically to save resources.
-   *
-   * <p>Must be called before interacting with synchronous cross-profile methods.
-   */
-  void startManuallyBinding() {
-    cancelAutomaticDisconnection();
-    isManuallyManagingConnection = true;
-    bind();
-  }
-
-  /**
-   * Stop manual connection management.
-   *
-   * <p>This can be called after {@link #startManuallyBinding()} or {@link #manuallyBind()} to
-   * return connection management responsibilities to the SDK.
-   *
-   * <p>You should not make any synchronous cross-profile calls after calling this method.
-   */
-  public void stopManualConnectionManagement() {
-    isManuallyManagingConnection = false;
-    maybeScheduleAutomaticDisconnection();
-  }
-
-  /**
-   * Attempt to bind to the other profile.
-   *
-   * <p>This will continually attempt to form a binding to the other profile in a background thread.
-   */
   private void bind() {
-    if (isBinding.getAndSet(true)) {
-      return;
-    }
-
-    startTryBinding();
+    bindRetryDelayMs = INITIAL_BIND_RETRY_DELAY_MS;
+    scheduledExecutorService.execute(this::tryBind);
   }
 
   private void onBindingAttemptSucceeded() {
+    clearScheduledBindTimeout();
     Log.i(LOG_TAG, "Binding attempt succeeded");
     checkTriggerManualConnectionLock();
   }
 
   private void onBindingAttemptFailed(String reason) {
-    onBindingAttemptFailed(reason, /* terminal= */ false);
+    onBindingAttemptFailed(reason, /* exception= */ null, /* terminal= */ false);
   }
 
-  private void onBindingAttemptFailed(String reason, boolean terminal) {
-    Log.i(LOG_TAG, "Binding attempt failed: " + reason);
-    throwExceptionForAsyncCalls(new UnavailableProfileException(reason));
-    if (terminal || !isManuallyManagingConnection || manuallyBindLatch != null) {
+  private void onBindingAttemptFailed(Exception exception) {
+    onBindingAttemptFailed(exception.getMessage(), exception, /* terminal= */ false);
+  }
+
+  private void onBindingAttemptFailed(String reason, Exception exception) {
+    onBindingAttemptFailed(reason, exception, /* terminal= */ false);
+  }
+
+  private void onBindingAttemptFailed(
+      String reason, @Nullable Exception exception, boolean terminal) {
+    // Always called on scheduled executor service thread
+    clearScheduledBindTimeout();
+    if (exception == null) {
+      Log.i(LOG_TAG, "Binding attempt failed: " + reason);
+      throwUnavailableException(new UnavailableProfileException(reason));
+    } else {
+      Log.i(LOG_TAG, "Binding attempt failed: " + reason, exception);
+      throwUnavailableException(new UnavailableProfileException(reason, exception));
+    }
+
+    if (terminal || connectionHolders.isEmpty() || manuallyBindLatch != null) {
       unbind();
       checkTriggerManualConnectionLock();
     } else {
       scheduleBindAttempt();
+    }
+  }
+
+  private void clearScheduledBindTimeout() {
+    ScheduledFuture<?> scheduledTimeout = scheduledBindTimeout.getAndSet(null);
+    if (scheduledTimeout != null) {
+      scheduledTimeout.cancel(/* mayInterruptIfRunning= */ true);
     }
   }
 
@@ -507,16 +487,16 @@ public class CrossProfileSender {
    *
    * <p>If there is already a binding present, it will be killed.
    */
-  void unbind() {
+  private void unbind() {
     Log.i(LOG_TAG, "Unbind");
-    throwExceptionForAsyncCalls(new UnavailableProfileException("No profile available"));
-    isBinding.set(false);
     if (isBound()) {
       context.unbindService(connection);
       iCrossProfileService.set(null);
       checkConnected();
       cancelAutomaticDisconnection();
     }
+    clearScheduledBindTimeout();
+    throwUnavailableException(new UnavailableProfileException("No profile available"));
     checkTriggerManualConnectionLock();
   }
 
@@ -524,17 +504,13 @@ public class CrossProfileSender {
     return binder.bindingIsPossible(context, availabilityRestrictions);
   }
 
-  private void startTryBinding() {
-    bindRetryDelayMs = INITIAL_BIND_RETRY_DELAY_MS;
-    scheduledExecutorService.execute(this::tryBind);
-  }
-
   private void tryBind() {
+    // Always called on scheduled executor service thread
     Log.i(LOG_TAG, "Attempting to bind");
 
-    if (scheduledTryBind != null) {
-      scheduledTryBind.cancel(/* mayInterruptIfRunning= */ false);
-      scheduledTryBind = null;
+    ScheduledFuture<?> scheduledFuture = scheduledTryBind.getAndSet(null);
+    if (scheduledFuture != null) {
+      scheduledFuture.cancel(/* mayInterruptIfRunning= */ false);
     }
 
     if (!canUseReflectedApis) {
@@ -542,13 +518,14 @@ public class CrossProfileSender {
       return;
     }
 
-    if (!isBinding.get()) {
-      onBindingAttemptFailed("Not trying to bind");
+    if (isBound()) {
+      Log.i(LOG_TAG, "Already bound");
+      onBindingAttemptSucceeded();
       return;
     }
 
-    if (isBound()) {
-      onBindingAttemptSucceeded();
+    if (connectionHolders.isEmpty()) {
+      onBindingAttemptFailed("Not trying to bind");
       return;
     }
 
@@ -562,24 +539,43 @@ public class CrossProfileSender {
       return;
     }
 
+    if (scheduledBindTimeout.get() != null) {
+      Log.i(LOG_TAG, "Already waiting to bind");
+      return;
+    }
+
     try {
+      // Schedule a timeout in case something happens and we never reach onServiceConnected
+      scheduledBindTimeout.set(scheduledExecutorService.schedule(this::timeoutBinding, 1, MINUTES));
       if (!binder.tryBind(context, bindToService, connection, availabilityRestrictions)) {
-        onBindingAttemptFailed("No profile available or app not installed in other profile");
+        onBindingAttemptFailed(
+            "No profile available, app not installed in other profile, or service not included in"
+                + " manifest");
+      } else {
+        Log.i(LOG_TAG, "binder.tryBind returned true, expecting onServiceConnected");
       }
     } catch (MissingApiException e) {
       Log.e(LOG_TAG, "MissingApiException when trying to bind", e);
-      onBindingAttemptFailed("Missing API");
+      onBindingAttemptFailed("Missing API", e);
+    } catch (UnavailableProfileException e) {
+      Log.e(LOG_TAG, "Error while trying to bind", e);
+      onBindingAttemptFailed(e);
     }
   }
 
+  private void timeoutBinding() {
+    onBindingAttemptFailed("Timed out while waiting for onServiceConnected");
+  }
+
   private void scheduleBindAttempt() {
-    if (scheduledTryBind != null && !scheduledTryBind.isDone()) {
+    ScheduledFuture<?> scheduledFuture = scheduledTryBind.get();
+    if (scheduledFuture != null && !scheduledFuture.isDone()) {
       return;
     }
 
     bindRetryDelayMs *= 2;
-    scheduledTryBind =
-        scheduledExecutorService.schedule(this::tryBind, bindRetryDelayMs, TimeUnit.MILLISECONDS);
+    scheduledTryBind.set(
+        scheduledExecutorService.schedule(this::tryBind, bindRetryDelayMs, MILLISECONDS));
   }
 
   boolean isBound() {
@@ -589,14 +585,21 @@ public class CrossProfileSender {
   /**
    * Make a synchronous cross-profile call.
    *
-   * @return A {@link Parcel} containing the return value. This must be recycled after use.
+   * @return A {@link Bundle} containing the return value under the key \"return\".
    * @throws UnavailableProfileException if a connection is not already established
    */
-  public Parcel call(long crossProfileTypeIdentifier, int methodIdentifier, Parcel params)
+  public Bundle call(long crossProfileTypeIdentifier, int methodIdentifier, Bundle params)
       throws UnavailableProfileException {
     try {
       return callWithExceptions(crossProfileTypeIdentifier, methodIdentifier, params);
-    } catch (UnavailableProfileException | RuntimeException e) {
+    } catch (UnavailableProfileException | RuntimeException | Error e) {
+      StackTraceElement[] remoteStack = e.getStackTrace();
+      StackTraceElement[] localStack = Thread.currentThread().getStackTrace();
+      StackTraceElement[] totalStack =
+          Arrays.copyOf(remoteStack, remoteStack.length + localStack.length - 1);
+      // We cut off the first element of localStack as it is just getting the stack trace
+      System.arraycopy(localStack, 1, totalStack, remoteStack.length, localStack.length - 1);
+      e.setStackTrace(totalStack);
       throw e;
     } catch (Throwable e) {
       throw new UnavailableProfileException("Unexpected checked exception", e);
@@ -606,100 +609,81 @@ public class CrossProfileSender {
   /**
    * Make a synchronous cross-profile call which expects some checked exceptions to be thrown.
    *
-   * <p>Behaves the same as {@link #call(long, int, Parcel)} except that it deals with checked
+   * <p>Behaves the same as {@link #call(long, int, Bundle)} except that it deals with checked
    * exceptions by throwing {@link Throwable}.
    *
-   * @return A {@link Parcel} containing the return value. This must be recycled after use.
+   * @return A {@link Bundle} containing the return value under the "return" key.
    * @throws UnavailableProfileException if a connection is not already established
    */
-  public Parcel callWithExceptions(
-      long crossProfileTypeIdentifier, int methodIdentifier, Parcel params) throws Throwable {
+  public Bundle callWithExceptions(
+      long crossProfileTypeIdentifier, int methodIdentifier, Bundle params) throws Throwable {
 
-    if (!isBound()) {
+    // This will cause a crash at some point in the future if there are no connection holders. This
+    // is acceptable because the rest of this call may succeed or fail depending on if a connection
+    // happens to be held - but calling this without connection holders is a programmer error and
+    // should be highlighted.
+    if (explicitConnectionHoldersIsEmpty.get()) {
+      throw new UnavailableProfileException(
+          "Synchronous calls can only be used when there is a connection holder");
+    }
+
+    ICrossProfileService service = iCrossProfileService.get();
+    if (service == null) {
       throw new UnavailableProfileException("Could not access other profile");
     }
 
-    if (!isManuallyManagingConnection) {
-      throw new UnavailableProfileException(
-          "Synchronous calls can only be used when manually connected");
-    }
+    CrossProfileBundleCallSender callSender =
+        new CrossProfileBundleCallSender(
+            service, crossProfileTypeIdentifier, methodIdentifier, /* callback= */ null);
+    Bundle returnBundle = callSender.makeBundleCall(params);
 
-    CrossProfileParcelCallSender callSender =
-        new CrossProfileParcelCallSender(
-            iCrossProfileService.get(),
-            crossProfileTypeIdentifier,
-            methodIdentifier,
-            /* callback= */ null);
-    Parcel parcel = callSender.makeParcelCall(params); // Recycled by caller
-    boolean hasError = parcel.readInt() == 1;
-
-    if (hasError) {
-      Throwable t = ParcelUtilities.readThrowableFromParcel(parcel);
+    if (returnBundle.containsKey("throwable")) {
+      Throwable t = BundleUtilities.readThrowableFromBundle(returnBundle, "throwable");
       if (t instanceof RuntimeException) {
-        throw new ProfileRuntimeException((RuntimeException) t);
+        throw new ProfileRuntimeException(t);
       }
       throw t;
     }
 
-    return parcel;
+    return returnBundle;
   }
 
-  /**
-   * Make an asynchronous cross-profile call.
-   *
-   * @param params These will be cached and will be recycled after the call is complete.
-   */
+  /** Make an asynchronous cross-profile call. */
   public void callAsync(
       long crossProfileTypeIdentifier,
       int methodIdentifier,
-      Parcel params,
+      Bundle params,
       LocalCallback callback,
-      long timeoutMillis) {
-
-    cancelAutomaticDisconnection();
-
-    asyncCallQueue.add(
-        new CrossProfileCall(
-            crossProfileTypeIdentifier, methodIdentifier, params, callback, timeoutMillis));
-
-    tryMakeAsyncCalls();
-    if (isManuallyManagingConnection) {
-      if (!isBindingPossible()) {
-        throwExceptionForAsyncCalls(new UnavailableProfileException("Profile not available"));
-      }
-    } else {
-      bind();
+      Object connectionHolderAlias) {
+    if (!isBindingPossible()) {
+      throwUnavailableException(new UnavailableProfileException("Profile not available"));
     }
+
+    scheduledExecutorService.execute(
+        () -> {
+          CrossProfileCall crossProfileCall =
+              new CrossProfileCall(crossProfileTypeIdentifier, methodIdentifier, params, callback);
+          connectionHolders.add(crossProfileCall);
+          cancelAutomaticDisconnection();
+          addConnectionHolderAlias(connectionHolderAlias, crossProfileCall);
+          unavailableProfileExceptionWatchers.add(crossProfileCall);
+
+          asyncCallQueue.add(crossProfileCall);
+
+          tryMakeAsyncCalls();
+          bind();
+        });
   }
 
-  private void throwExceptionForAsyncCalls(Throwable throwable) {
-    Parcel throwableParcel = createThrowableParcel(throwable);
-
-    while (true) {
-      CrossProfileCall call = asyncCallQueue.pollFirst();
-      if (call == null) {
-        break;
-      }
-
-      call.callback.onException(throwableParcel);
-      throwableParcel.setDataPosition(0);
-      call.recycle();
+  private void throwUnavailableException(Throwable throwable) {
+    for (ExceptionCallback callback : unavailableProfileExceptionWatchers) {
+      removeConnectionHolder(callback);
+      callback.onException(throwable);
     }
-
-    while (true) {
-      OngoingCrossProfileCall call = ongoingCrossProfileCalls.pollFirst();
-      if (call == null) {
-        break;
-      }
-
-      call.onException(throwableParcel);
-      throwableParcel.setDataPosition(0);
-    }
-
-    throwableParcel.recycle();
   }
 
   private void tryMakeAsyncCalls() {
+    Log.i(LOG_TAG, "tryMakeAsyncCalls");
     if (!isBound()) {
       return;
     }
@@ -708,46 +692,43 @@ public class CrossProfileSender {
   }
 
   private void drainAsyncQueue() {
+    Log.i(LOG_TAG, "drainAsyncQueue");
     while (true) {
       CrossProfileCall call = asyncCallQueue.pollFirst();
       if (call == null) {
-        break;
+        return;
       }
-      OngoingCrossProfileCall ongoingCall =
-          new OngoingCrossProfileCall(this, call.callback, call.timeoutMillis);
-      ongoingCrossProfileCalls.add(ongoingCall);
+      OngoingCrossProfileCall ongoingCall = new OngoingCrossProfileCall(this, call);
 
       try {
-        CrossProfileParcelCallSender callSender =
-            new CrossProfileParcelCallSender(
-                iCrossProfileService.get(),
-                call.crossProfileTypeIdentifier,
-                call.methodIdentifier,
-                ongoingCall);
-        Parcel p = callSender.makeParcelCall(call.params);
+        ICrossProfileService service = iCrossProfileService.get();
+        if (service == null) {
+          Log.w(LOG_TAG, "OngoingCrossProfileCall: not bound anymore, adding back to queue");
+          asyncCallQueue.add(call);
+          return;
+        }
+        CrossProfileBundleCallSender callSender =
+            new CrossProfileBundleCallSender(
+                service, call.crossProfileTypeIdentifier, call.methodIdentifier, ongoingCall);
 
-        boolean hasError = p.readInt() == 1;
-        call.recycle();
+        Bundle p = callSender.makeBundleCall(call.params);
 
-        if (hasError) {
+        if (p.containsKey("throwable")) {
           RuntimeException exception =
-              (RuntimeException) ParcelUtilities.readThrowableFromParcel(p);
-          p.recycle();
-          ongoingCrossProfileCalls.remove(ongoingCall);
+              (RuntimeException) BundleUtilities.readThrowableFromBundle(p, "throwable");
+          removeConnectionHolder(ongoingCall.call);
           throw new ProfileRuntimeException(exception);
         }
-
-        p.recycle();
-        ongoingCall.scheduleTimeout(scheduledExecutorService);
       } catch (UnavailableProfileException e) {
-        ongoingCrossProfileCalls.remove(ongoingCall);
+        Log.w(
+            LOG_TAG, "OngoingCrossProfileCall: UnavailableProfileException, adding back to queue");
         asyncCallQueue.add(call);
         return;
       }
     }
   }
 
-  void checkAvailability() {
+  private void checkAvailability() {
     if (isBindingPossible() && (lastReportedAvailabilityStatus != AVAILABLE)) {
       updateAvailability();
     } else if (!isBindingPossible() && (lastReportedAvailabilityStatus != UNAVAILABLE)) {
@@ -755,39 +736,31 @@ public class CrossProfileSender {
     }
   }
 
-  void updateAvailability() {
-    scheduledExecutorService.execute(availabilityListener::availabilityChanged);
+  private void updateAvailability() {
+    // This is only executed on the executor thread
+    availabilityListener.availabilityChanged();
     lastReportedAvailabilityStatus = isBindingPossible() ? AVAILABLE : UNAVAILABLE;
   }
 
-  void checkConnected() {
+  private void checkConnected() {
+    // This is only executed on the executor thread
     if (isBound() && lastReportedConnectedStatus != CONNECTED) {
-      scheduledExecutorService.execute(connectionListener::connectionChanged);
+      connectionListener.connectionChanged();
       lastReportedConnectedStatus = CONNECTED;
     } else if (!isBound() && lastReportedConnectedStatus != DISCONNECTED) {
-      scheduledExecutorService.execute(connectionListener::connectionChanged);
+      connectionListener.connectionChanged();
       lastReportedConnectedStatus = DISCONNECTED;
     }
   }
 
-  boolean isManuallyManagingConnection() {
-    return isManuallyManagingConnection;
+  /** Create a {@link Bundle} containing a {@link Throwable}. */
+  private static Bundle createThrowableBundle(Throwable throwable) {
+    Bundle bundle = new Bundle(Bundler.class.getClassLoader());
+    BundleUtilities.writeThrowableToBundle(bundle, "throwable", throwable);
+    return bundle;
   }
 
-  /**
-   * Create a {@link Parcel} containing a {@link Throwable}.
-   *
-   * <p>The {@link Parcel} must be recycled after use.
-   */
-  private static Parcel createThrowableParcel(Throwable throwable) {
-    Parcel parcel = Parcel.obtain(); // Recycled by caller
-    ParcelUtilities.writeThrowableToParcel(parcel, throwable);
-    parcel.setDataPosition(0);
-    return parcel;
-  }
-
-  @Nullable
-  static UserHandle getOtherUserHandle(
+  static @Nullable UserHandle getOtherUserHandle(
       Context context, AvailabilityRestrictions availabilityRestrictions) {
     if (VERSION.SDK_INT < VERSION_CODES.P) {
       // CrossProfileApps was introduced in P
@@ -803,8 +776,7 @@ public class CrossProfileSender {
     return selectUserHandleToBind(context, otherUsers);
   }
 
-  @Nullable
-  private static UserHandle findDifferentRunningUser(
+  private static @Nullable UserHandle findDifferentRunningUser(
       Context context,
       UserHandle ignoreUserHandle,
       AvailabilityRestrictions availabilityRestrictions) {
@@ -821,5 +793,78 @@ public class CrossProfileSender {
         filterUsersByAvailabilityRestrictions(context, otherUsers, availabilityRestrictions);
 
     return selectUserHandleToBind(context, otherUsers);
+  }
+
+  void addConnectionHolder(Object o) {
+    scheduledExecutorService.execute(
+        () -> {
+          explicitConnectionHolders.add(o);
+          explicitConnectionHoldersIsEmpty.set(false);
+          connectionHolders.add(o);
+
+          cancelAutomaticDisconnection();
+          bind();
+        });
+  }
+
+  void removeConnectionHolder(Object o) {
+    if (o == null) {
+        throw new NullPointerException("Connection holder cannot be null");
+    }
+
+    scheduledExecutorService.execute(
+        () -> {
+          removeConnectionHolderAndAliases(o);
+
+          maybeScheduleAutomaticDisconnection();
+        });
+  }
+
+  void clearConnectionHolders() {
+    scheduledExecutorService.execute(
+        () -> {
+          connectionHolders.clear();
+          explicitConnectionHolders.clear();
+          explicitConnectionHoldersIsEmpty.set(true);
+          connectionHolderAliases.clear();
+
+          maybeScheduleAutomaticDisconnection();
+        });
+  }
+
+  private void removeConnectionHolderAndAliases(Object o) {
+    // Always called on scheduled executor thread
+    Set<Object> aliases = connectionHolderAliases.get(o);
+    if (aliases != null) {
+      connectionHolderAliases.remove(o);
+      for (Object alias : aliases) {
+        removeConnectionHolderAndAliases(alias);
+      }
+    }
+
+    explicitConnectionHolders.remove(o);
+    explicitConnectionHoldersIsEmpty.set(explicitConnectionHolders.isEmpty());
+    connectionHolders.remove(o);
+    unavailableProfileExceptionWatchers.remove(o);
+  }
+
+  /**
+   * Registers a connection holder alias.
+   *
+   * <p>This means that if the key is removed, then the value will also be removed. If the value is
+   * removed, the key will not be removed.
+   */
+  void addConnectionHolderAlias(Object key, Object value) {
+    scheduledExecutorService.execute(
+        () -> {
+          Set<Object> aliases = connectionHolderAliases.get(key);
+          if (aliases == null) {
+            aliases = Collections.newSetFromMap(new WeakHashMap<>());
+          }
+
+          aliases.add(value);
+
+          connectionHolderAliases.put(key, aliases);
+        });
   }
 }

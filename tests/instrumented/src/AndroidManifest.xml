@@ -24,10 +24,12 @@
       android:targetSdkVersion="28"/>
 
   <uses-permission android:name="android.permission.INTERACT_ACROSS_USERS" />
+  <uses-permission android:name="android.permission.INTERACT_ACROSS_USERS_FULL" />
 
   <application>
     <uses-library android:name="android.test.runner" />
     <service android:name="com.google.android.enterprise.connectedapps.testapp.connector.TestProfileConnector_Service" android:exported="false" />
+    <service android:name="com.google.android.enterprise.connectedapps.testapp.crossuser.AppCrossUserConnector_Service" android:exported="false" />
   </application>
 
   <instrumentation android:name="com.google.android.apps.common.testing.testrunner.Google3InstrumentationTestRunner"

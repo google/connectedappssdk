@@ -17,12 +17,12 @@ package com.google.android.enterprise.connectedapps.processor;
 
 import static com.google.android.enterprise.connectedapps.processor.annotationdiscovery.AnnotationFinder.hasCrossProfileCallbackAnnotation;
 
+import com.google.android.enterprise.connectedapps.processor.containers.Context;
 import com.google.android.enterprise.connectedapps.processor.containers.CrossProfileCallbackInterfaceInfo;
 import com.google.android.enterprise.connectedapps.processor.containers.CrossProfileMethodInfo;
 import com.google.android.enterprise.connectedapps.processor.containers.FutureWrapper;
 import com.google.android.enterprise.connectedapps.processor.containers.ParcelableWrapper;
 import com.google.android.enterprise.connectedapps.processor.containers.Type;
-import com.google.android.enterprise.connectedapps.processor.containers.ValidatorContext;
 import com.google.auto.value.AutoValue;
 import com.google.common.collect.ImmutableCollection;
 import com.google.common.collect.ImmutableMap;
@@ -123,11 +123,9 @@ public final class SupportedTypes {
       if (TypeUtils.isGeneric(wrappedType)) {
         return false; // We don't support generic arrays
       }
-      if (wrappedType.getKind().isPrimitive()) {
-        return false; // We don't support primitive arrays
-      }
       if (TypeUtils.isArray(wrappedType)) {
-        return false; // We don't support multidimensional arrays
+        // We don't support non-primitive multidimensional arrays
+        return TypeUtils.isPrimitiveArray(wrappedType);
       }
       return isValidReturnType(wrappedType, context);
     }
@@ -196,11 +194,9 @@ public final class SupportedTypes {
       if (TypeUtils.isGeneric(wrappedType)) {
         return false; // We don't support generic arrays
       }
-      if (wrappedType.getKind().isPrimitive()) {
-        return false; // We don't support primitive arrays
-      }
       if (TypeUtils.isArray(wrappedType)) {
-        return false; // We don't support multidimensional arrays
+        // We don't support non-primitive multidimensional arrays
+        return TypeUtils.isPrimitiveArray(wrappedType);
       }
       return isValidParameterType(wrappedType, context.toBuilder().setWrapped(true).build());
     }
@@ -255,6 +251,26 @@ public final class SupportedTypes {
     return usableTypes.getOrDefault(type.toString(), null);
   }
 
+  CodeBlock generatePutIntoBundleCode(
+      String bundleName, Type type, String keyCode, String valueCode) {
+
+    if (type.getPutIntoBundleCode().isPresent()) {
+      return CodeBlock.of(type.getPutIntoBundleCode().get(), bundleName, keyCode, valueCode);
+    }
+
+    throw new IllegalArgumentException(
+        String.format("%s can not put into bundle", type.getQualifiedName()));
+  }
+
+  CodeBlock generateGetFromBundleCode(String bundleName, Type type, String keyCode) {
+    if (type.getGetFromBundleCode().isPresent()) {
+      return CodeBlock.of(type.getGetFromBundleCode().get(), bundleName, keyCode);
+    }
+
+    throw new IllegalArgumentException(
+        String.format("%s can not get from bundle", type.getQualifiedName()));
+  }
+
   CodeBlock generateWriteToParcelCode(String parcelName, Type type, String valueCode) {
     if (type.getWriteToParcelCode().isPresent()) {
       return CodeBlock.of(type.getWriteToParcelCode().get(), parcelName, valueCode);
@@ -287,50 +303,48 @@ public final class SupportedTypes {
   }
 
   public static SupportedTypes createFromMethods(
-      Types types,
-      Elements elements,
+      Context context,
       Collection<ParcelableWrapper> parcelableWrappers,
       Collection<FutureWrapper> futureWrappers,
       Collection<ExecutableElement> methods) {
     Map<String, Type> usableTypes = new HashMap<>();
 
-    addDefaultTypes(types, elements, usableTypes);
+    addDefaultTypes(context, usableTypes);
     addParcelableWrapperTypes(usableTypes, parcelableWrappers);
     addFutureWrapperTypes(usableTypes, futureWrappers);
-    addSupportForUsedTypes(types, elements, usableTypes, methods);
+    addSupportForUsedTypes(context, usableTypes, methods);
 
     return new SupportedTypes(usableTypes);
   }
 
   private static void addSupportForUsedTypes(
-      Types types,
-      Elements elements,
-      Map<String, Type> usableTypes,
-      Collection<ExecutableElement> methods) {
+      Context context, Map<String, Type> usableTypes, Collection<ExecutableElement> methods) {
     for (ExecutableElement method : methods) {
-      addSupportForUsedType(types, elements, usableTypes, method.getReturnType());
+      addSupportForUsedType(context, usableTypes, method.getReturnType());
 
       for (VariableElement parameter : method.getParameters()) {
-        addSupportForUsedType(types, elements, usableTypes, parameter.asType());
+        addSupportForUsedType(context, usableTypes, parameter.asType());
       }
     }
   }
 
   private static void addSupportForUsedType(
-      Types types, Elements elements, Map<String, Type> usableTypes, TypeMirror type) {
+      Context context, Map<String, Type> usableTypes, TypeMirror type) {
     if (TypeUtils.isArray(type)) {
-      addSupportForUsedType(types, elements, usableTypes, TypeUtils.extractTypeFromArray(type));
-      if (!TypeUtils.extractTypeFromArray(type).getKind().isPrimitive()) {
-        type = types.getArrayType(elements.getTypeElement("java.lang.Object").asType());
+      if (!TypeUtils.isPrimitiveArray(type)) {
+        addSupportForUsedType(context, usableTypes, TypeUtils.extractTypeFromArray(type));
+        type =
+            context
+                .types()
+                .getArrayType(context.elements().getTypeElement("java.lang.Object").asType());
       }
     }
 
-
     if (TypeUtils.isGeneric(type)) {
-      addSupportForGenericUsedType(types, elements, usableTypes, type);
+      addSupportForGenericUsedType(context, usableTypes, type);
       return;
     }
-    Optional<Type> optionalSupportedType = getSupportedType(types, elements, usableTypes, type);
+    Optional<Type> optionalSupportedType = getSupportedType(context, usableTypes, type);
     if (!optionalSupportedType.isPresent()) {
       // The type isn't supported
       return;
@@ -342,7 +356,7 @@ public final class SupportedTypes {
     if (supportedType.isCrossProfileCallbackInterface()) {
       for (TypeMirror typeMirror :
           supportedType.getCrossProfileCallbackInterface().get().argumentTypes()) {
-        addSupportForUsedType(types, elements, usableTypes, typeMirror);
+        addSupportForUsedType(context, usableTypes, typeMirror);
       }
     }
 
@@ -350,11 +364,10 @@ public final class SupportedTypes {
   }
 
   private static void addSupportForGenericUsedType(
-      Types types, Elements elements, Map<String, Type> usableTypes, TypeMirror type) {
+      Context context, Map<String, Type> usableTypes, TypeMirror type) {
     TypeMirror genericType = TypeUtils.removeTypeArguments(type);
 
-    Optional<Type> optionalSupportedType =
-        getSupportedType(types, elements, usableTypes, genericType);
+    Optional<Type> optionalSupportedType = getSupportedType(context, usableTypes, genericType);
     if (!optionalSupportedType.isPresent()) {
       // The base type isn't supported
       return;
@@ -366,13 +379,15 @@ public final class SupportedTypes {
 
     if (!supportedType.isSupportedWithAnyGenericType()) {
       for (TypeMirror typeArgument : TypeUtils.extractTypeArguments(type)) {
-        addSupportForUsedType(types, elements, usableTypes, typeArgument);
+        addSupportForUsedType(context, usableTypes, typeArgument);
       }
     }
   }
 
   private static Optional<Type> getSupportedType(
-      Types types, Elements elements, Map<String, Type> usableTypes, TypeMirror type) {
+      Context context, Map<String, Type> usableTypes, TypeMirror type) {
+    Elements elements = context.elements();
+    Types types = context.types();
     if (usableTypes.containsKey(type.toString())) {
       return Optional.of(usableTypes.get(type.toString()));
     }
@@ -413,6 +428,8 @@ public final class SupportedTypes {
         .setTypeMirror(typeMirror)
         .setAcceptableReturnType(true)
         .setAcceptableParameterType(true)
+        .setPutIntoBundleCode("$L.putParcelable($L, $L)")
+        .setGetFromBundleCode("$L.getParcelable($L)")
         .setWriteToParcelCode("$L.writeParcelable($L, flags)")
         .setReadFromParcelCode("$L.readParcelable(Bundler.class.getClassLoader())")
         // Parcelables must take care of their own generic types
@@ -425,6 +442,8 @@ public final class SupportedTypes {
         .setTypeMirror(typeMirror)
         .setAcceptableReturnType(true)
         .setAcceptableParameterType(true)
+        .setPutIntoBundleCode("$L.putSerializable($L, $L)")
+        .setGetFromBundleCode("$L.getSerializable($L)")
         .setWriteToParcelCode("$L.writeSerializable($L)")
         .setReadFromParcelCode("$L.readSerializable()")
         // Serializables must take care of their own generic types
@@ -437,13 +456,15 @@ public final class SupportedTypes {
     return new Builder(usableTypes);
   }
 
-  private static void addDefaultTypes(
-      Types types, Elements elements, Map<String, Type> usableTypes) {
+  private static void addDefaultTypes(Context context, Map<String, Type> usableTypes) {
+    Elements elements = context.elements();
+    Types types = context.types();
     addUsableType(
         usableTypes,
         Type.builder()
             .setTypeMirror(types.getNoType(TypeKind.VOID))
             .setAcceptableReturnType(true)
+            .setGetFromBundleCode("null")
             .setReadFromParcelCode("null")
             .build());
     addUsableType(
@@ -451,6 +472,7 @@ public final class SupportedTypes {
         Type.builder()
             .setTypeMirror(elements.getTypeElement("java.lang.Void").asType())
             .setAcceptableReturnType(true)
+            .setGetFromBundleCode("null")
             .setReadFromParcelCode("null")
             .build());
     addUsableType(
@@ -459,7 +481,20 @@ public final class SupportedTypes {
             .setTypeMirror(elements.getTypeElement("java.lang.String").asType())
             .setAcceptableReturnType(true)
             .setAcceptableParameterType(true)
+            .setPutIntoBundleCode("$L.putString($L, $L)")
+            .setGetFromBundleCode("$L.getString($L)")
             .setWriteToParcelCode("$L.writeString($L)")
+            .setReadFromParcelCode("$L.readString()")
+            .build());
+    addUsableType(
+        usableTypes,
+        Type.builder()
+            .setTypeMirror(elements.getTypeElement("java.lang.CharSequence").asType())
+            .setAcceptableReturnType(true)
+            .setAcceptableParameterType(true)
+            .setPutIntoBundleCode("$L.putString($L, String.valueOf($L))")
+            .setGetFromBundleCode("$L.getString($L)")
+            .setWriteToParcelCode("$L.writeString(String.valueOf($L))")
             .setReadFromParcelCode("$L.readString()")
             .build());
     addUsableType(
@@ -468,6 +503,8 @@ public final class SupportedTypes {
             .setTypeMirror(types.getPrimitiveType(TypeKind.BYTE))
             .setAcceptableReturnType(true)
             .setAcceptableParameterType(true)
+            .setPutIntoBundleCode("$L.putByte($L, $L)")
+            .setGetFromBundleCode("$L.getByte($L)")
             .setWriteToParcelCode("$L.writeByte($L)")
             .setReadFromParcelCode("$L.readByte()")
             .build());
@@ -477,6 +514,8 @@ public final class SupportedTypes {
             .setTypeMirror(types.boxedClass(types.getPrimitiveType(TypeKind.BYTE)).asType())
             .setAcceptableReturnType(true)
             .setAcceptableParameterType(true)
+            .setPutIntoBundleCode("$L.putByte($L, $L)")
+            .setGetFromBundleCode("$L.getByte($L)")
             .setWriteToParcelCode("$L.writeByte($L)")
             .setReadFromParcelCode("$L.readByte()")
             .build());
@@ -486,6 +525,8 @@ public final class SupportedTypes {
             .setTypeMirror(types.getPrimitiveType(TypeKind.SHORT))
             .setAcceptableReturnType(true)
             .setAcceptableParameterType(true)
+            .setPutIntoBundleCode("$L.putShort($L, $L)")
+            .setGetFromBundleCode("$L.getShort($L)")
             .setWriteToParcelCode("$L.writeInt($L)")
             .setReadFromParcelCode("(short)$L.readInt()")
             .build());
@@ -495,6 +536,8 @@ public final class SupportedTypes {
             .setTypeMirror(types.boxedClass(types.getPrimitiveType(TypeKind.SHORT)).asType())
             .setAcceptableReturnType(true)
             .setAcceptableParameterType(true)
+            .setPutIntoBundleCode("$L.putShort($L, $L)")
+            .setGetFromBundleCode("$L.getShort($L)")
             .setWriteToParcelCode("$L.writeInt($L)")
             .setReadFromParcelCode("(short)$L.readInt()")
             .build());
@@ -504,6 +547,8 @@ public final class SupportedTypes {
             .setTypeMirror(types.getPrimitiveType(TypeKind.INT))
             .setAcceptableReturnType(true)
             .setAcceptableParameterType(true)
+            .setPutIntoBundleCode("$L.putInt($L, $L)")
+            .setGetFromBundleCode("$L.getInt($L)")
             .setWriteToParcelCode("$L.writeInt($L)")
             .setReadFromParcelCode("$L.readInt()")
             .build());
@@ -513,6 +558,8 @@ public final class SupportedTypes {
             .setTypeMirror(types.boxedClass(types.getPrimitiveType(TypeKind.INT)).asType())
             .setAcceptableReturnType(true)
             .setAcceptableParameterType(true)
+            .setPutIntoBundleCode("$L.putInt($L, $L)")
+            .setGetFromBundleCode("$L.getInt($L)")
             .setWriteToParcelCode("$L.writeInt($L)")
             .setReadFromParcelCode("$L.readInt()")
             .build());
@@ -522,6 +569,8 @@ public final class SupportedTypes {
             .setTypeMirror(types.getPrimitiveType(TypeKind.LONG))
             .setAcceptableReturnType(true)
             .setAcceptableParameterType(true)
+            .setPutIntoBundleCode("$L.putLong($L, $L)")
+            .setGetFromBundleCode("$L.getLong($L)")
             .setWriteToParcelCode("$L.writeLong($L)")
             .setReadFromParcelCode("$L.readLong()")
             .build());
@@ -531,6 +580,8 @@ public final class SupportedTypes {
             .setTypeMirror(types.boxedClass(types.getPrimitiveType(TypeKind.LONG)).asType())
             .setAcceptableReturnType(true)
             .setAcceptableParameterType(true)
+            .setPutIntoBundleCode("$L.putLong($L, $L)")
+            .setGetFromBundleCode("$L.getLong($L)")
             .setWriteToParcelCode("$L.writeLong($L)")
             .setReadFromParcelCode("$L.readLong()")
             .build());
@@ -540,6 +591,8 @@ public final class SupportedTypes {
             .setTypeMirror(types.getPrimitiveType(TypeKind.FLOAT))
             .setAcceptableReturnType(true)
             .setAcceptableParameterType(true)
+            .setPutIntoBundleCode("$L.putFloat($L, $L)")
+            .setGetFromBundleCode("$L.getFloat($L)")
             .setWriteToParcelCode("$L.writeFloat($L)")
             .setReadFromParcelCode("$L.readFloat()")
             .build());
@@ -549,6 +602,8 @@ public final class SupportedTypes {
             .setTypeMirror(types.boxedClass(types.getPrimitiveType(TypeKind.FLOAT)).asType())
             .setAcceptableReturnType(true)
             .setAcceptableParameterType(true)
+            .setPutIntoBundleCode("$L.putFloat($L, $L)")
+            .setGetFromBundleCode("$L.getFloat($L)")
             .setWriteToParcelCode("$L.writeFloat($L)")
             .setReadFromParcelCode("$L.readFloat()")
             .build());
@@ -558,6 +613,8 @@ public final class SupportedTypes {
             .setTypeMirror(types.getPrimitiveType(TypeKind.DOUBLE))
             .setAcceptableReturnType(true)
             .setAcceptableParameterType(true)
+            .setPutIntoBundleCode("$L.putDouble($L, $L)")
+            .setGetFromBundleCode("$L.getDouble($L)")
             .setWriteToParcelCode("$L.writeDouble($L)")
             .setReadFromParcelCode("$L.readDouble()")
             .build());
@@ -567,6 +624,8 @@ public final class SupportedTypes {
             .setTypeMirror(types.boxedClass(types.getPrimitiveType(TypeKind.DOUBLE)).asType())
             .setAcceptableReturnType(true)
             .setAcceptableParameterType(true)
+            .setPutIntoBundleCode("$L.putDouble($L, $L)")
+            .setGetFromBundleCode("$L.getDouble($L)")
             .setWriteToParcelCode("$L.writeDouble($L)")
             .setReadFromParcelCode("$L.readDouble()")
             .build());
@@ -576,6 +635,8 @@ public final class SupportedTypes {
             .setTypeMirror(types.getPrimitiveType(TypeKind.CHAR))
             .setAcceptableReturnType(true)
             .setAcceptableParameterType(true)
+            .setPutIntoBundleCode("$L.putChar($L, $L)")
+            .setGetFromBundleCode("$L.getChar($L)")
             .setWriteToParcelCode("$L.writeInt($L)")
             .setReadFromParcelCode("(char)$L.readInt()")
             .build());
@@ -585,6 +646,8 @@ public final class SupportedTypes {
             .setTypeMirror(types.boxedClass(types.getPrimitiveType(TypeKind.CHAR)).asType())
             .setAcceptableReturnType(true)
             .setAcceptableParameterType(true)
+            .setPutIntoBundleCode("$L.putChar($L, $L)")
+            .setGetFromBundleCode("$L.getChar($L)")
             .setWriteToParcelCode("$L.writeInt($L)")
             .setReadFromParcelCode("(char)$L.readInt()")
             .build());
@@ -594,6 +657,8 @@ public final class SupportedTypes {
             .setTypeMirror(types.getPrimitiveType(TypeKind.BOOLEAN))
             .setAcceptableReturnType(true)
             .setAcceptableParameterType(true)
+            .setPutIntoBundleCode("$L.putBoolean($L, $L)")
+            .setGetFromBundleCode("$L.getBoolean($L)")
             .setWriteToParcelCode("$L.writeInt($L ? 1 : 0)")
             .setReadFromParcelCode("($L.readInt() == 1)")
             .build());
@@ -603,6 +668,8 @@ public final class SupportedTypes {
             .setTypeMirror(types.boxedClass(types.getPrimitiveType(TypeKind.BOOLEAN)).asType())
             .setAcceptableReturnType(true)
             .setAcceptableParameterType(true)
+            .setPutIntoBundleCode("$L.putBoolean($L, $L)")
+            .setGetFromBundleCode("$L.getBoolean($L)")
             .setWriteToParcelCode("$L.writeInt($L ? 1 : 0)")
             .setReadFromParcelCode("($L.readInt() == 1)")
             .build());
@@ -616,6 +683,99 @@ public final class SupportedTypes {
             .setSupportedInsideWrapper(false)
             .setSupportedInsideCrossProfileCallback(false)
             .build());
+
+    addUsableType(
+        usableTypes,
+        Type.builder()
+            .setTypeMirror(elements.getTypeElement("android.os.Parcelable").asType())
+            .setAcceptableReturnType(true)
+            .setAcceptableParameterType(true)
+            .setPutIntoBundleCode("$L.putParcelable($L, $L)")
+            .setGetFromBundleCode("$L.getParcelable($L)")
+            .setWriteToParcelCode("$L.writeParcelable($L, flags)")
+            .setReadFromParcelCode("$L.readParcelable(Bundler.class.getClassLoader())")
+            .build());
+
+    //region ****  Primitive Array Types  ****
+    addUsableType(
+        usableTypes,
+        Type.builder()
+            .setTypeMirror(types.getArrayType(types.getPrimitiveType(TypeKind.BOOLEAN)))
+            .setAcceptableParameterType(true)
+            .setAcceptableReturnType(true)
+            .setPutIntoBundleCode("$L.putBooleanArray($L, $L)")
+            .setGetFromBundleCode("$L.getBooleanArray($L)")
+            .setWriteToParcelCode("$L.writeBooleanArray($L)")
+            .setReadFromParcelCode("$L.createBooleanArray()")
+            .build());
+    addUsableType(
+        usableTypes,
+        Type.builder()
+            .setTypeMirror(types.getArrayType(types.getPrimitiveType(TypeKind.BYTE)))
+            .setAcceptableParameterType(true)
+            .setAcceptableReturnType(true)
+            .setPutIntoBundleCode("$L.putByteArray($L, $L)")
+            .setGetFromBundleCode("$L.getByteArray($L)")
+            .setWriteToParcelCode("$L.writeByteArray($L)")
+            .setReadFromParcelCode("$L.createByteArray()")
+            .build());
+    addUsableType(
+        usableTypes,
+        Type.builder()
+            .setTypeMirror(types.getArrayType(types.getPrimitiveType(TypeKind.CHAR)))
+            .setAcceptableParameterType(true)
+            .setAcceptableReturnType(true)
+            .setPutIntoBundleCode("$L.putCharArray($L, $L)")
+            .setGetFromBundleCode("$L.getCharArray($L)")
+            .setWriteToParcelCode("$L.writeCharArray($L)")
+            .setReadFromParcelCode("$L.createCharArray()")
+            .build());
+    addUsableType(
+        usableTypes,
+        Type.builder()
+            .setTypeMirror(types.getArrayType(types.getPrimitiveType(TypeKind.DOUBLE)))
+            .setAcceptableParameterType(true)
+            .setAcceptableReturnType(true)
+            .setPutIntoBundleCode("$L.putDoubleArray($L, $L)")
+            .setGetFromBundleCode("$L.getDoubleArray($L)")
+            .setWriteToParcelCode("$L.writeDoubleArray($L)")
+            .setReadFromParcelCode("$L.createDoubleArray()")
+            .build());
+    addUsableType(
+        usableTypes,
+        Type.builder()
+            .setTypeMirror(types.getArrayType(types.getPrimitiveType(TypeKind.FLOAT)))
+            .setAcceptableParameterType(true)
+            .setAcceptableReturnType(true)
+            .setPutIntoBundleCode("$L.putFloatArray($L, $L)")
+            .setGetFromBundleCode("$L.getFloatArray($L)")
+            .setWriteToParcelCode("$L.writeFloatArray($L)")
+            .setReadFromParcelCode("$L.createFloatArray()")
+            .build());
+    addUsableType(
+        usableTypes,
+        Type.builder()
+            .setTypeMirror(types.getArrayType(types.getPrimitiveType(TypeKind.INT)))
+            .setAcceptableParameterType(true)
+            .setAcceptableReturnType(true)
+            .setPutIntoBundleCode("$L.putIntArray($L, $L)")
+            .setGetFromBundleCode("$L.getIntArray($L)")
+            .setWriteToParcelCode("$L.writeIntArray($L)")
+            .setReadFromParcelCode("$L.createIntArray()")
+            .build());
+    addUsableType(
+        usableTypes,
+        Type.builder()
+            .setTypeMirror(types.getArrayType(types.getPrimitiveType(TypeKind.LONG)))
+            .setAcceptableParameterType(true)
+            .setAcceptableReturnType(true)
+            .setPutIntoBundleCode("$L.putLongArray($L, $L)")
+            .setGetFromBundleCode("$L.getLongArray($L)")
+            .setWriteToParcelCode("$L.writeLongArray($L)")
+            .setReadFromParcelCode("$L.createLongArray()")
+            .build());
+    //endregion ****  Primitive Array Types  ****
+
   }
 
   private static void addUsableType(Map<String, Type> usableTypes, Type type) {
@@ -640,6 +800,9 @@ public final class SupportedTypes {
             .setTypeMirror(parcelableWrapper.wrappedType())
             .setAcceptableReturnType(true)
             .setAcceptableParameterType(true)
+            .setPutIntoBundleCode("$L.putParcelable($L, " + createParcelableCode + ")")
+            .setGetFromBundleCode(
+                "((" + parcelableWrapper.wrapperClassName() + ") $L.getParcelable($L)).get()")
             .setWriteToParcelCode("$L.writeParcelable(" + createParcelableCode + ", flags)")
             .setReadFromParcelCode(
                 "(("
@@ -677,8 +840,7 @@ public final class SupportedTypes {
     }
 
     /** Filtering to only include used types. */
-    public Builder filterUsed(
-        ValidatorContext context, Collection<CrossProfileMethodInfo> methods) {
+    public Builder filterUsed(Context context, Collection<CrossProfileMethodInfo> methods) {
 
       Map<String, Type> usedTypes = new HashMap<>();
 
@@ -692,23 +854,23 @@ public final class SupportedTypes {
     }
 
     private void copySupportedTypesForMethod(
-        ValidatorContext context, Map<String, Type> usedTypes, CrossProfileMethodInfo method) {
+        Context context, Map<String, Type> usedTypes, CrossProfileMethodInfo method) {
       copySupportedType(context, usedTypes, method.returnType());
       for (TypeMirror argumentType : method.parameterTypes()) {
         copySupportedType(context, usedTypes, argumentType);
       }
     }
 
-    private void copySupportedType(
-        ValidatorContext context, Map<String, Type> usedTypes, TypeMirror type) {
+    private void copySupportedType(Context context, Map<String, Type> usedTypes, TypeMirror type) {
       if (TypeUtils.isGeneric(type)) {
         copySupportedGenericType(context, usedTypes, type);
         return;
       }
 
       if (TypeUtils.isArray(type)) {
-        copySupportedType(context, usedTypes, TypeUtils.extractTypeFromArray(type));
-        if (!TypeUtils.extractTypeFromArray(type).getKind().isPrimitive()) {
+        if (!TypeUtils.isPrimitiveArray(type)) {
+          // Primitive arrays aren't resolved recursively
+          copySupportedType(context, usedTypes, TypeUtils.extractTypeFromArray(type));
           type =
               context
                   .types()
@@ -736,7 +898,7 @@ public final class SupportedTypes {
     }
 
     private void copySupportedGenericType(
-        ValidatorContext context, Map<String, Type> usedTypes, TypeMirror type) {
+        Context context, Map<String, Type> usedTypes, TypeMirror type) {
       TypeMirror genericType = TypeUtils.removeTypeArguments(type);
 
       // The type must have been seen in when constructing the oldSupportedTypes so this should not

@@ -15,17 +15,12 @@
  */
 package com.google.android.enterprise.connectedapps.testapp.crossuser;
 
-import android.app.Service;
-import com.google.android.enterprise.connectedapps.annotations.CrossUserConfiguration;
-import com.google.android.enterprise.connectedapps.annotations.CrossUserConfigurations;
+import com.google.android.enterprise.connectedapps.annotations.CrossUserProvider;
 
-@CrossUserConfigurations(@CrossUserConfiguration(providers = TestCrossUserProvider.class))
-public abstract class TestCrossUserConfiguration {
+public class NotesManagerProvider {
 
-  // This is available so the test targets can access the generated Service class.
-  public static Class<? extends Service> getService() {
-    return TestCrossUserConnector_Service.class;
+  @CrossUserProvider
+  public NotesManager provideNotesManager() {
+    return new NotesManager();
   }
-
-  private TestCrossUserConfiguration() {}
 }

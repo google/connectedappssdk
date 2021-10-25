@@ -15,14 +15,12 @@
  */
 package com.google.android.enterprise.connectedapps.processor.containers;
 
-import static com.google.android.enterprise.connectedapps.processor.annotationdiscovery.AnnotationFinder.hasCrossProfileAnnotation;
 import static java.util.stream.Collectors.toSet;
 
 import com.google.android.enterprise.connectedapps.annotations.CrossProfile;
 import com.google.android.enterprise.connectedapps.processor.ProcessorConfiguration;
 import com.google.android.enterprise.connectedapps.processor.SupportedTypes;
 import com.google.android.enterprise.connectedapps.processor.TypeUtils;
-import com.google.android.enterprise.connectedapps.processor.annotationdiscovery.interfaces.CrossProfileAnnotation;
 import com.google.auto.value.AutoValue;
 import com.google.common.collect.ImmutableCollection;
 import com.google.common.collect.ImmutableSet;
@@ -36,7 +34,6 @@ import java.util.List;
 import java.util.Optional;
 import java.util.stream.IntStream;
 import javax.lang.model.element.ExecutableElement;
-import javax.lang.model.element.PackageElement;
 import javax.lang.model.element.TypeElement;
 import javax.lang.model.type.TypeMirror;
 
@@ -50,15 +47,13 @@ public abstract class CrossProfileTypeInfo {
 
   public abstract SupportedTypes supportedTypes();
 
-  public abstract Optional<ProfileConnectorInfo> profileConnector();
-
-  public abstract ClassName profileClassName();
+  public abstract Optional<ConnectorInfo> connectorInfo();
 
   /**
-   * The specified timeout for async calls, or {@link CrossProfileAnnotation#DEFAULT_TIMEOUT_MILLIS}
-   * if unspecified.
+   * The verbatim (not prefixed) name of the interface class used to make cross-profile or
+   * cross-user calls.
    */
-  public abstract long timeoutMillis();
+  public abstract ClassName generatedClassName();
 
   public String simpleName() {
     return crossProfileTypeElement().getSimpleName().toString();
@@ -112,39 +107,15 @@ public abstract class CrossProfileTypeInfo {
         crossProfileTypeElement,
         ImmutableSet.copyOf(crossProfileMethods),
         supportedTypesBuilder.build(),
-        crossProfileType.profileConnector(),
-        findProfileClassName(context, crossProfileTypeElement, crossProfileType),
-        crossProfileType.timeoutMillis());
+        crossProfileType.connectorInfo(),
+        findGeneratedClassName(context, crossProfileTypeElement));
   }
 
-  private static ClassName findProfileClassName(
-      ValidatorContext context,
-      TypeElement typeElement,
-      ValidatorCrossProfileTypeInfo crossProfileType) {
-    return hasCrossProfileAnnotation(typeElement)
-        ? findAnnotatedProfileClassName(context, typeElement, crossProfileType)
-        : createDefaultProfileClassName(context, typeElement);
-  }
-
-  private static ClassName createDefaultProfileClassName(
+  private static ClassName findGeneratedClassName(
       ValidatorContext context, TypeElement typeElement) {
-    PackageElement originalPackage = context.elements().getPackageOf(typeElement);
-    String profileAwareClassName =
-        String.format("Profile%s", typeElement.getSimpleName().toString());
-
-    return ClassName.get(originalPackage.getQualifiedName().toString(), profileAwareClassName);
-  }
-
-  private static ClassName findAnnotatedProfileClassName(
-      ValidatorContext context,
-      TypeElement typeElement,
-      ValidatorCrossProfileTypeInfo crossProfileType) {
-    String profileClassName = crossProfileType.profileClassName();
-    if (!profileClassName.isEmpty()) {
-      return ClassName.bestGuess(profileClassName);
-    }
-
-    return createDefaultProfileClassName(context, typeElement);
+    return ClassName.get(
+        context.elements().getPackageOf(typeElement).getQualifiedName().toString(),
+        typeElement.getSimpleName().toString());
   }
 
   private static Collection<Type> convertTypeMirrorToSupportedTypes(

@@ -15,6 +15,7 @@
  */
 package com.google.android.enterprise.connectedapps.internal;
 
+import android.os.Bundle;
 import android.os.Parcel;
 import com.google.android.enterprise.connectedapps.CrossProfileSender;
 import java.nio.ByteBuffer;
@@ -25,13 +26,20 @@ import java.util.Map;
 /**
  * Build up parcels over multiple calls and prepare responses.
  *
- * <p>This is the counterpart to {@link ParcelCallSender}. Calls by the {@link ParcelCallSender}
+ * <p>This is the counterpart to {@link BundleCallSender}. Calls by the {@link BundleCallSender}
  * should be relayed to an instance of this class.
  */
-public final class ParcelCallReceiver {
+public final class BundleCallReceiver {
+
+  static final byte STATUS_COMPLETE = 0;
+  static final byte STATUS_INCOMPLETE = 1;
+  static final byte STATUS_INCLUDES_BUNDLES = 2;
+
   private final Map<Long, byte[]> preparedCalls = new HashMap<>();
   private final Map<Long, Integer> preparedCallParts = new HashMap<>();
   private final Map<Long, byte[]> preparedResponses = new HashMap<>();
+  private final Map<Long, Bundle> preparedCallBundles = new HashMap<>();
+  private final Map<Long, Bundle> preparedResponseBundles = new HashMap<>();
 
   /**
    * Prepare a response to be returned by calls to {@link #getPreparedResponse(long, int)}.
@@ -41,20 +49,30 @@ public final class ParcelCallReceiver {
    * is a 1, then the following 4 bytes will be an {@link Integer} representing the total number of
    * bytes in the response.
    *
-   * <p>The @{link Parcel} will not be recycled.</p>
+   * <p>The {@code byte[]} returned will consist only of a 2 if a bundle needs to be fetched using
+   * {@link #getPreparedResponseBundle(long, int)}.
    */
-  public byte[] prepareResponse(long callId, Parcel responseParcel) {
-    byte[] responseBytes = responseParcel.marshall();
+  public byte[] prepareResponse(long callId, Bundle responseBundle) {
+    Parcel responseParcel = Parcel.obtain();
+    responseBundle.writeToParcel(responseParcel, /* flags= */ 0);
+
+    byte[] responseBytes;
+    try {
+      responseBytes = responseParcel.marshall();
+    } catch (Exception | AssertionError e) {
+      prepareResponseBundle(callId, /* bundleId= */ 0, responseBundle);
+      return new byte[] {STATUS_INCLUDES_BUNDLES};
+    } finally {
+      responseParcel.recycle();
+    }
 
     if (responseBytes.length <= CrossProfileSender.MAX_BYTES_PER_BLOCK) {
-      // Prepend with 0 to indicate the bytes are complete
-      return ByteUtilities.joinByteArrays(new byte[] {0}, responseBytes);
+      return ByteUtilities.joinByteArrays(new byte[] {STATUS_COMPLETE}, responseBytes);
     }
     // Record the bytes to be sent and send the first block
     preparedResponses.put(callId, responseBytes);
     byte[] response = new byte[CrossProfileSender.MAX_BYTES_PER_BLOCK + 5];
-    // 1 = has additional content
-    response[0] = 1;
+    response[0] = STATUS_INCOMPLETE;
     byte[] sizeBytes = ByteBuffer.allocate(4).putInt(responseBytes.length).array();
     System.arraycopy(sizeBytes, /* srcPos= */ 0, response, /* destPos= */ 1, /* length= */ 4);
     System.arraycopy(
@@ -64,6 +82,26 @@ public final class ParcelCallReceiver {
         /* destPos= */ 5,
         /* length= */ CrossProfileSender.MAX_BYTES_PER_BLOCK);
     return response;
+  }
+
+  public void prepareBundle(long callId, int bundleId, Bundle bundle) {
+    if (preparedCallBundles.containsKey(callId)) {
+      throw new IllegalStateException("Already prepared bundle for call " + callId);
+    }
+
+    preparedCallBundles.put(callId, bundle);
+  }
+
+  private void prepareResponseBundle(long callId, int bundleId, Bundle bundle) {
+    if (preparedResponseBundles.containsKey(callId)) {
+      throw new IllegalStateException("Already prepared bundle for response " + callId);
+    }
+
+    preparedResponseBundles.put(callId, bundle);
+  }
+
+  public Bundle getPreparedResponseBundle(long callId, int bundleId) {
+    return preparedResponseBundles.remove(callId);
   }
 
   /**
@@ -89,18 +127,20 @@ public final class ParcelCallReceiver {
   }
 
   /**
-   * Fetch the full {@link Parcel using bytes previously stored by calls to
-   * {@link #prepareCall(long, int, int, byte[])}.
+   * Fetch the full {@link Bundle} using bytes previously stored by calls to {@link
+   * #prepareCall(long, int, int, byte[])}.
    *
    * <p>If this is the only block, then the {@code paramBytes} will be unmarshalled directly into a
-   * {@link Parcel}.
-   *
-   * <p>The returned {@link Parcel} must be recycled after use.
+   * {@link Bundle}.
    *
    * @throws IllegalStateException If this is not the only block, and any previous blocks are
    *     missing.
    */
-  public Parcel getPreparedCall(long callId, int blockId, byte[] paramBytes) {
+  public Bundle getPreparedCall(long callId, int blockId, byte[] paramBytes) {
+    if (bytesRefersToBundle(paramBytes)) {
+      return preparedCallBundles.remove(callId);
+    }
+
     if (blockId > 0) {
       int expectedBlocks = 0;
       for (int i = 0; i < blockId; i++) {
@@ -122,14 +162,21 @@ public final class ParcelCallReceiver {
       preparedCallParts.remove(callId);
     }
 
-    Parcel parcel = Parcel.obtain(); // Recycled by caller
+    Parcel parcel = Parcel.obtain();
     parcel.unmarshall(paramBytes, 0, paramBytes.length);
     parcel.setDataPosition(0);
-    return parcel;
+    Bundle bundle = new Bundle(Bundler.class.getClassLoader());
+    bundle.readFromParcel(parcel);
+    parcel.recycle();
+    return bundle;
+  }
+
+  static boolean bytesRefersToBundle(byte[] bytes) {
+    return bytes[0] == STATUS_INCLUDES_BUNDLES;
   }
 
   /**
-   * Get a block from a response previously prepared with {@link #prepareResponse(long, Parcel)}.
+   * Get a block from a response previously prepared with {@link #prepareResponse(long, Bundle)}.
    *
    * <p>If this is the final block, then the prepared blocks will be dropped, and future calls to
    * this method will fail.

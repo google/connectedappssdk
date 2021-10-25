@@ -36,9 +36,6 @@ import javax.lang.model.type.TypeMirror;
 @AutoValue
 public abstract class CrossProfileConfigurationInfo {
 
-  public static final String CROSS_PROFILE_CONNECTOR_QUALIFIED_NAME =
-      "com.google.android.enterprise.connectedapps.CrossProfileConnector";
-
   public abstract TypeElement configurationElement();
 
   public abstract ImmutableCollection<ProviderClassInfo> providers();
@@ -55,7 +52,7 @@ public abstract class CrossProfileConfigurationInfo {
     return ClassName.get(configurationElement());
   }
 
-  public abstract ProfileConnectorInfo profileConnector();
+  public abstract ConnectorInfo connectorInfo();
 
   public static CrossProfileConfigurationInfo create(
       ValidatorContext context, ValidatorCrossProfileConfigurationInfo configuration) {
@@ -64,35 +61,38 @@ public abstract class CrossProfileConfigurationInfo {
             .map(
                 m ->
                     ProviderClassInfo.create(
-                        context, ValidatorProviderClassInfo.create(context.processingEnv(), m)))
+                        context, ValidatorProviderClassInfo.create(context, m)))
             .collect(toSet());
 
-    ProfileConnectorInfo profileConnectorInfo =
+    ConnectorInfo connectorInfo =
         providerClasses.stream()
             .flatMap(m -> m.allCrossProfileTypes().stream())
-            .map(CrossProfileTypeInfo::profileConnector)
+            .map(CrossProfileTypeInfo::connectorInfo)
             .flatMap(Streams::stream)
             .findFirst()
-            .orElseGet(
-                () ->
-                    ProfileConnectorInfo.create(
-                        context.processingEnv(),
-                        getConfiguredConnectorOrDefault(context, configuration),
-                        context.globalSupportedTypes()));
+            .orElseGet(() -> defaultConnector(context, configuration));
 
     return new AutoValue_CrossProfileConfigurationInfo(
         configuration.configurationElement(),
         ImmutableSet.copyOf(providerClasses),
         configuration.serviceSuperclass(),
         configuration.serviceClass(),
-        profileConnectorInfo);
+        connectorInfo);
   }
 
-  private static TypeElement getConfiguredConnectorOrDefault(
+  private static ConnectorInfo defaultConnector(
       ValidatorContext context, ValidatorCrossProfileConfigurationInfo configuration) {
-    return configuration
-        .connector()
-        .orElseGet(() -> context.elements().getTypeElement(CROSS_PROFILE_CONNECTOR_QUALIFIED_NAME));
+    if (configuration.connector().isPresent()) {
+      if (ConnectorInfo.isProfileConnector(context, configuration.connector().get())) {
+        return ConnectorInfo.forProfileConnector(
+            context, configuration.connector().get(), context.globalSupportedTypes());
+      } else if (ConnectorInfo.isUserConnector(context, configuration.connector().get())) {
+        return ConnectorInfo.forUserConnector(
+            context, configuration.connector().get(), context.globalSupportedTypes());
+      }
+    }
+
+    return ConnectorInfo.unspecified(context, context.globalSupportedTypes());
   }
 
   private static Collection<Type> convertTypeMirrorToSupportedTypes(

@@ -15,12 +15,15 @@
  */
 package com.google.android.enterprise.connectedapps.processor;
 
+import static com.google.android.enterprise.connectedapps.processor.ClassNameUtilities.getBuilderClassName;
+import static com.google.android.enterprise.connectedapps.processor.ClassNameUtilities.prepend;
+import static com.google.android.enterprise.connectedapps.processor.ClassNameUtilities.transformClassName;
 import static com.google.android.enterprise.connectedapps.processor.CommonClassNames.ABSTRACT_USER_CONNECTOR_BUILDER_CLASSNAME;
 import static com.google.android.enterprise.connectedapps.processor.CommonClassNames.ABSTRACT_USER_CONNECTOR_CLASSNAME;
 import static com.google.android.enterprise.connectedapps.processor.CommonClassNames.AVAILABILITY_RESTRICTIONS_CLASSNAME;
-import static com.google.android.enterprise.connectedapps.processor.CommonClassNames.CONNECTION_BINDER_CLASSNAME;
 import static com.google.android.enterprise.connectedapps.processor.CommonClassNames.CONTEXT_CLASSNAME;
 import static com.google.android.enterprise.connectedapps.processor.CommonClassNames.SCHEDULED_EXECUTOR_SERVICE_CLASSNAME;
+import static com.google.android.enterprise.connectedapps.processor.CommonClassNames.USER_BINDER_FACTORY_CLASSNAME;
 import static com.google.common.base.Preconditions.checkNotNull;
 
 import com.google.android.enterprise.connectedapps.annotations.GeneratedUserConnector;
@@ -56,7 +59,7 @@ class UserConnectorCodeGenerator {
   void generate() {
     if (generated) {
       throw new IllegalStateException(
-          "ProfileConnectorCodeGenerator#generate can only be called once");
+          "UserConnectorCodeGenerator#generate can only be called once");
     }
     generated = true;
 
@@ -92,7 +95,7 @@ class UserConnectorCodeGenerator {
             .addModifiers(Modifier.PRIVATE)
             .addParameter(builderClassName, "builder")
             .addStatement(
-                "super($1T.class, builder.profileConnectorBuilder)", connector.connectorClassName())
+                "super($1T.class, builder.userConnectorBuilder)", connector.connectorClassName())
             .build());
 
     generateUserConnectorBuilder(classBuilder);
@@ -100,7 +103,7 @@ class UserConnectorCodeGenerator {
     generatorUtilities.writeClassToFile(className.packageName(), classBuilder);
   }
 
-  private void generateUserConnectorBuilder(TypeSpec.Builder profileConnector) {
+  private void generateUserConnectorBuilder(TypeSpec.Builder userConnector) {
     ClassName connectorClassName = getGeneratedUserConnectorClassName(generatorContext, connector);
     ClassName builderClassName =
         getGeneratedUserConnectorBuilderClassName(generatorContext, connector);
@@ -121,13 +124,22 @@ class UserConnectorCodeGenerator {
     classBuilder.addMethod(
         MethodSpec.constructorBuilder()
             .addParameter(CONTEXT_CLASSNAME, "context")
-            .addStatement("profileConnectorBuilder.setContext(context)")
+            .addStatement("userConnectorBuilder.setContext(context)")
             .build());
 
     classBuilder.addField(
-        FieldSpec.builder(ABSTRACT_USER_CONNECTOR_BUILDER_CLASSNAME, "profileConnectorBuilder")
+        FieldSpec.builder(ABSTRACT_USER_CONNECTOR_BUILDER_CLASSNAME, "userConnectorBuilder")
             .addModifiers(Modifier.PRIVATE, Modifier.FINAL)
             .initializer(initialiser)
+            .build());
+
+    classBuilder.addMethod(
+        MethodSpec.methodBuilder("setBinderFactory")
+            .addModifiers(Modifier.PUBLIC)
+            .addParameter(USER_BINDER_FACTORY_CLASSNAME, "binderFactory")
+            .returns(builderClassName)
+            .addStatement("userConnectorBuilder.setBinderFactory(binderFactory)")
+            .addStatement("return this")
             .build());
 
     classBuilder.addMethod(
@@ -136,16 +148,7 @@ class UserConnectorCodeGenerator {
             .addParameter(SCHEDULED_EXECUTOR_SERVICE_CLASSNAME, "scheduledExecutorService")
             .returns(builderClassName)
             .addStatement(
-                "profileConnectorBuilder.setScheduledExecutorService(scheduledExecutorService)")
-            .addStatement("return this")
-            .build());
-
-    classBuilder.addMethod(
-        MethodSpec.methodBuilder("setBinder")
-            .addModifiers(Modifier.PUBLIC)
-            .addParameter(CONNECTION_BINDER_CLASSNAME, "binder")
-            .returns(builderClassName)
-            .addStatement("profileConnectorBuilder.setBinder(binder)")
+                "userConnectorBuilder.setScheduledExecutorService(scheduledExecutorService)")
             .addStatement("return this")
             .build());
 
@@ -156,23 +159,16 @@ class UserConnectorCodeGenerator {
             .addStatement("return new $1T(this)", connectorClassName)
             .build());
 
-    profileConnector.addType(classBuilder.build());
+    userConnector.addType(classBuilder.build());
   }
 
   static ClassName getGeneratedUserConnectorClassName(
       GeneratorContext generatorContext, UserConnectorInfo connector) {
-    return ClassName.get(
-        connector.connectorClassName().packageName(),
-        "Generated" + connector.connectorClassName().simpleName());
+    return transformClassName(connector.connectorClassName(), prepend("Generated"));
   }
 
   static ClassName getGeneratedUserConnectorBuilderClassName(
       GeneratorContext generatorContext, UserConnectorInfo connector) {
-    return ClassName.get(
-        connector.connectorClassName().packageName()
-            + "."
-            + "Generated"
-            + connector.connectorClassName().simpleName(),
-        "Builder");
+    return getBuilderClassName(getGeneratedUserConnectorClassName(generatorContext, connector));
   }
 }

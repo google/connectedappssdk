@@ -27,7 +27,6 @@ import com.squareup.javapoet.ClassName;
 import java.util.Collection;
 import java.util.HashSet;
 import java.util.Set;
-import javax.annotation.processing.ProcessingEnvironment;
 import javax.lang.model.element.PackageElement;
 import javax.lang.model.element.TypeElement;
 import javax.lang.model.util.Elements;
@@ -72,21 +71,18 @@ public abstract class ProfileConnectorInfo {
   public abstract AvailabilityRestrictions availabilityRestrictions();
 
   public static ProfileConnectorInfo create(
-      ProcessingEnvironment processingEnv,
-      TypeElement connectorElement,
-      SupportedTypes globalSupportedTypes) {
-
-    Elements elements = processingEnv.getElementUtils();
+      Context context, TypeElement connectorElement, SupportedTypes globalSupportedTypes) {
+    Elements elements = context.elements();
 
     CustomProfileConnectorAnnotationInfo annotationInfo =
-        extractFromCustomProfileConnectorAnnotation(processingEnv, elements, connectorElement);
+        extractFromCustomProfileConnectorAnnotation(context, elements, connectorElement);
 
     Set<TypeElement> parcelableWrappers = new HashSet<>(annotationInfo.parcelableWrapperClasses());
     Set<TypeElement> futureWrappers = new HashSet<>(annotationInfo.futureWrapperClasses());
 
     for (TypeElement importConnectorClass : annotationInfo.importsClasses()) {
       ProfileConnectorInfo importConnector =
-          ProfileConnectorInfo.create(processingEnv, importConnectorClass, globalSupportedTypes);
+          ProfileConnectorInfo.create(context, importConnectorClass, globalSupportedTypes);
       parcelableWrappers.addAll(importConnector.parcelableWrapperClasses());
       futureWrappers.addAll(importConnector.futureWrapperClasses());
     }
@@ -98,13 +94,8 @@ public abstract class ProfileConnectorInfo {
         globalSupportedTypes
             .asBuilder()
             .addParcelableWrappers(
-                ParcelableWrapper.createCustomParcelableWrappers(
-                    processingEnv.getTypeUtils(),
-                    processingEnv.getElementUtils(),
-                    parcelableWrappers))
-            .addFutureWrappers(
-                FutureWrapper.createCustomFutureWrappers(
-                    processingEnv.getTypeUtils(), processingEnv.getElementUtils(), futureWrappers))
+                ParcelableWrapper.createCustomParcelableWrappers(context, parcelableWrappers))
+            .addFutureWrappers(FutureWrapper.createCustomFutureWrappers(context, futureWrappers))
             .build(),
         ImmutableSet.copyOf(parcelableWrappers),
         ImmutableSet.copyOf(futureWrappers),
@@ -113,7 +104,7 @@ public abstract class ProfileConnectorInfo {
   }
 
   private static CustomProfileConnectorAnnotationInfo extractFromCustomProfileConnectorAnnotation(
-      ProcessingEnvironment processingEnv, Elements elements, TypeElement connectorElement) {
+      Context context, Elements elements, TypeElement connectorElement) {
     CustomProfileConnector customProfileConnector =
         connectorElement.getAnnotation(CustomProfileConnector.class);
 
@@ -129,13 +120,13 @@ public abstract class ProfileConnectorInfo {
 
     Collection<TypeElement> parcelableWrappers =
         GeneratorUtilities.extractClassesFromAnnotation(
-            processingEnv.getTypeUtils(), customProfileConnector::parcelableWrappers);
+            context.types(), customProfileConnector::parcelableWrappers);
     Collection<TypeElement> futureWrappers =
         GeneratorUtilities.extractClassesFromAnnotation(
-            processingEnv.getTypeUtils(), customProfileConnector::futureWrappers);
+            context.types(), customProfileConnector::futureWrappers);
     Collection<TypeElement> imports =
         GeneratorUtilities.extractClassesFromAnnotation(
-            processingEnv.getTypeUtils(), customProfileConnector::imports);
+            context.types(), customProfileConnector::imports);
 
     String serviceClassName = customProfileConnector.serviceClassName();
 

@@ -15,15 +15,16 @@
  */
 package com.google.android.enterprise.connectedapps.internal;
 
+import android.os.Bundle;
 import android.os.RemoteException;
 import com.google.android.enterprise.connectedapps.ICrossProfileCallback;
 
-/** Implementation of {@link ParcelCallSender} used when passing a callback exception. */
-public class CrossProfileCallbackExceptionParcelCallSender extends ParcelCallSender {
+/** Implementation of {@link BundleCallSender} used when passing a callback exception. */
+public class CrossProfileCallbackExceptionBundleCallSender extends BundleCallSender {
 
   private final ICrossProfileCallback callback;
 
-  public CrossProfileCallbackExceptionParcelCallSender(ICrossProfileCallback callback) {
+  public CrossProfileCallbackExceptionBundleCallSender(ICrossProfileCallback callback) {
     if (callback == null) {
       throw new NullPointerException("callback must not be null");
     }
@@ -34,6 +35,11 @@ public class CrossProfileCallbackExceptionParcelCallSender extends ParcelCallSen
   @Override
   void prepareCall(long callId, int blockId, int totalBytes, byte[] bytes) throws RemoteException {
     callback.prepareResult(callId, blockId, totalBytes, bytes);
+  }
+
+  @Override
+  void prepareBundle(long callId, int bundleId, Bundle bundle) throws RemoteException {
+    callback.prepareBundle(callId, bundleId, bundle);
   }
 
   /**
@@ -48,11 +54,18 @@ public class CrossProfileCallbackExceptionParcelCallSender extends ParcelCallSen
   }
 
   /**
-   * Callbacks cannot themselves return values, so this method will always throw an {@link
-   * IllegalStateException}.
+   * Always throw an {@link IllegalStateException} as callbacks cannot themselves return values.
    */
   @Override
   byte[] fetchResponse(long callId, int blockId) throws RemoteException {
+    throw new IllegalStateException();
+  }
+
+  /**
+   * Always throw an {@link IllegalStateException} as callbacks cannot themselves return values.
+   */
+  @Override
+  Bundle fetchResponseBundle(long callId, int bundleId) throws RemoteException {
     throw new IllegalStateException();
   }
 }

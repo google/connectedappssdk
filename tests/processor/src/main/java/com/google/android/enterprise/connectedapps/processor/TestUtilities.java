@@ -577,6 +577,19 @@ final class TestUtilities {
         "}");
   }
 
+  public static JavaFileObject annotatedNotesConfigurationWithNotesProviderAndCrossUserConnector(
+      AnnotationPrinter annotationPrinter) {
+    return JavaFileObjects.forSourceLines(
+        NOTES_PACKAGE + ".NotesConfiguration",
+        "package " + NOTES_PACKAGE + ";",
+        "import " + annotationPrinter.crossProfileConfigurationQualifiedName() + ";",
+        "import com.google.android.enterprise.connectedapps.CrossUserConnector;",
+        annotationPrinter.crossProfileConfigurationAsAnnotation(
+            "providers=NotesProvider.class, connector=CrossUserConnector.class"),
+        "public abstract class NotesConfiguration {",
+        "}");
+  }
+
   /** Combines two iterables into an iterable of all possible pairs. */
   public static Iterable<Object[]> combineParameters(
       Iterable<?> parameters1, Iterable<?> parameters2) {
