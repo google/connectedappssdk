@@ -30,6 +30,7 @@ import java.util.HashSet;
 import java.util.Map;
 import java.util.Set;
 import java.util.WeakHashMap;
+import java.util.concurrent.Executor;
 
 /**
  * A fake {@link ProfileConnector} for use in tests.
@@ -51,6 +52,8 @@ public abstract class AbstractFakeProfileConnector implements FakeProfileConnect
   private WorkProfileState workProfileState = WorkProfileState.DOES_NOT_EXIST;
   private boolean isConnected = false;
   private boolean hasPermissionToMakeCrossProfileCalls = true;
+  private ConnectionHandler connectionHandler = () -> true;
+  private Executor executor = Runnable::run;
 
   private final Set<Object> connectionHolders = Collections.newSetFromMap(new WeakHashMap<>());
   private final Map<Object, Set<Object>> connectionHolderAliases = new WeakHashMap<>();
@@ -157,8 +160,21 @@ public abstract class AbstractFakeProfileConnector implements FakeProfileConnect
   }
 
   @Override
+  public void setConnectionHandler(ConnectionHandler connectionHandler) {
+    this.connectionHandler = connectionHandler;
+  }
+
+  @Override
+  public void setExecutor(Executor executor) {
+    this.executor = executor;
+  }
+
+  @Override
   public void automaticallyConnect() {
-    if (hasPermissionToMakeCrossProfileCalls && isAvailable() && !isConnected) {
+    if (hasPermissionToMakeCrossProfileCalls
+        && isAvailable()
+        && !isConnected
+        && connectionHandler.tryConnect()) {
       isConnected = true;
       notifyConnectionChanged();
     }
@@ -186,19 +202,19 @@ public abstract class AbstractFakeProfileConnector implements FakeProfileConnect
   }
 
   @Override
-
   public ProfileConnectionHolder connect(Object connectionHolder)
       throws UnavailableProfileException {
     if (!hasPermissionToMakeCrossProfileCalls || !isAvailable()) {
       throw new UnavailableProfileException("No profile available");
     }
 
-    return addConnectionHolder(connectionHolder);
+    connectionHolders.add(connectionHolder);
+    automaticallyConnect();
+
+    return ProfileConnectionHolder.create(this, connectionHolder);
   }
 
-  /**
-   * Stop manually managing the connection and ensure that the connector is disconnected.
-   */
+  /** Stop manually managing the connection and ensure that the connector is disconnected. */
   public void disconnect() {
     connectionHolders.clear();
     timeoutConnection();
@@ -283,7 +299,7 @@ public abstract class AbstractFakeProfileConnector implements FakeProfileConnect
   @Override
   public ProfileConnectionHolder addConnectionHolder(Object connectionHolder) {
     connectionHolders.add(connectionHolder);
-    automaticallyConnect();
+    executor.execute(this::automaticallyConnect);
 
     return ProfileConnectionHolder.create(this, connectionHolder);
   }

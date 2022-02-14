@@ -27,6 +27,9 @@ import com.google.android.enterprise.connectedapps.TestAvailabilityListener;
 import com.google.android.enterprise.connectedapps.TestConnectionListener;
 import com.google.android.enterprise.connectedapps.annotations.CustomProfileConnector.ProfileType;
 import com.google.android.enterprise.connectedapps.exceptions.UnavailableProfileException;
+import java.util.ArrayDeque;
+import java.util.Queue;
+import java.util.concurrent.Executor;
 import org.junit.After;
 import org.junit.Test;
 import org.junit.runner.RunWith;
@@ -91,6 +94,38 @@ public class AbstractFakeProfileConnectorTest {
     fakeProfileConnector.addConnectionHolder(this);
 
     assertThat(connectionListener.connectionChangedCount()).isEqualTo(1);
+  }
+
+  @Test
+  public void addConnectionHolder_doesNotConnectIfConnectionHandlerReturnsFalse() {
+    fakeProfileConnector.turnOnWorkProfile();
+    fakeProfileConnector.setConnectionHandler(() -> false);
+    fakeProfileConnector.addConnectionListener(connectionListener);
+
+    fakeProfileConnector.addConnectionHolder(this);
+
+    assertThat(connectionListener.connectionChangedCount()).isEqualTo(0);
+    assertThat(fakeProfileConnector.isConnected()).isFalse();
+  }
+
+  @Test
+  public void addConnectionHolder_usesPassedExecutorForAutomaticConnection() {
+    fakeProfileConnector.turnOnWorkProfile();
+    QueueingExecutor fakeExecutor = new QueueingExecutor();
+    fakeProfileConnector.setExecutor(fakeExecutor);
+    fakeProfileConnector.addConnectionListener(connectionListener);
+
+    fakeProfileConnector.addConnectionHolder(this);
+
+    assertThat(connectionListener.connectionChangedCount()).isEqualTo(0);
+    assertThat(fakeProfileConnector.isConnected()).isFalse();
+
+    fakeExecutor.runNext();
+
+    assertThat(connectionListener.connectionChangedCount()).isEqualTo(1);
+    assertThat(fakeProfileConnector.isConnected()).isTrue();
+
+    assertThat(fakeExecutor.isQueueEmpty()).isTrue();
   }
 
   @Test
@@ -159,6 +194,29 @@ public class AbstractFakeProfileConnectorTest {
     fakeProfileConnector.addConnectionListener(connectionListener);
 
     assertThrows(UnavailableProfileException.class, fakeProfileConnector::connect);
+  }
+
+  @Test
+  public void connect_doesNotConnectIfHandlerReturnsFalse() throws Exception {
+    fakeProfileConnector.turnOnWorkProfile();
+    fakeProfileConnector.setConnectionHandler(() -> false);
+    fakeProfileConnector.addConnectionListener(connectionListener);
+
+    fakeProfileConnector.connect();
+
+    assertThat(connectionListener.connectionChangedCount()).isEqualTo(0);
+  }
+
+  @Test
+  public void connect_doesNotUsePassedExecutor() throws Exception {
+    fakeProfileConnector.turnOnWorkProfile();
+    // Noop executor which we expect won't be used.
+    fakeProfileConnector.setExecutor(task -> {});
+    fakeProfileConnector.addConnectionListener(connectionListener);
+
+    fakeProfileConnector.connect();
+
+    assertThat(connectionListener.connectionChangedCount()).isEqualTo(1);
   }
 
   @Test
@@ -475,5 +533,23 @@ public class AbstractFakeProfileConnectorTest {
     fakeProfileConnector.timeoutConnection();
 
     assertThat(fakeProfileConnector.isConnected()).isFalse();
+  }
+}
+
+class QueueingExecutor implements Executor {
+
+  private final Queue<Runnable> commands = new ArrayDeque<>();
+
+  @Override
+  public void execute(Runnable command) {
+    commands.add(command);
+  }
+
+  public void runNext() {
+    commands.remove().run();
+  }
+
+  public boolean isQueueEmpty() {
+    return commands.isEmpty();
   }
 }

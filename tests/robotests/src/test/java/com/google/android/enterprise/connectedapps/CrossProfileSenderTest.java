@@ -55,6 +55,7 @@ public class CrossProfileSenderTest {
   private CrossProfileSender sender;
   private final TestConnectionListener connectionListener = new TestConnectionListener();
   private final TestAvailabilityListener availabilityListener = new TestAvailabilityListener();
+  private final TestAvailabilityListener availabilityListener2 = new TestAvailabilityListener();
   private final TestScheduledExecutorService scheduledExecutorService =
       new TestScheduledExecutorService();
   private final RobolectricTestUtilities testUtilities =
@@ -72,7 +73,6 @@ public class CrossProfileSenderTest {
             availabilityListener,
             scheduledExecutorService,
             AvailabilityRestrictions.DEFAULT);
-    sender.beginMonitoringAvailabilityChanges();
 
     testUtilities.setBinding(testService, TEST_CONNECTOR_CLASS_NAME);
     testUtilities.createWorkUser();
@@ -455,6 +455,28 @@ public class CrossProfileSenderTest {
     testUtilities.turnOffWorkProfile();
 
     assertThat(availabilityListener.availabilityChangedCount()).isEqualTo(1);
+  }
+
+  @Test
+  public void createMultipleSenders_workProfileBecomesAvailable_callsAvailabilityListenerForEachSender() {
+    CrossProfileSender sender2 =
+        new CrossProfileSender(
+            context,
+            TEST_SERVICE_CLASS_NAME,
+            new DefaultProfileBinder(),
+            connectionListener,
+            availabilityListener2,
+            scheduledExecutorService,
+            AvailabilityRestrictions.DEFAULT);
+
+    testUtilities.turnOffWorkProfile();
+    availabilityListener.reset();
+    availabilityListener2.reset();
+
+    testUtilities.turnOnWorkProfile();
+
+    assertThat(availabilityListener.availabilityChangedCount()).isEqualTo(1);
+    assertThat(availabilityListener2.availabilityChangedCount()).isEqualTo(1);
   }
 
   @Test

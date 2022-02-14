@@ -115,6 +115,11 @@ public class DefaultUserBinder implements ConnectionBinder {
       PackageInfo packageInfo =
           packageManager.getPackageInfo(context.getPackageName(), PackageManager.GET_PERMISSIONS);
 
+      if (packageInfo == null || packageInfo.requestedPermissions == null) {
+        hasCachedPermissionRequests = true;
+        return;
+      }
+
       for (String permission : packageInfo.requestedPermissions) {
         if (permission.equals(INTERACT_ACROSS_PROFILES)) {
           requestsInteractAcrossProfiles = true;

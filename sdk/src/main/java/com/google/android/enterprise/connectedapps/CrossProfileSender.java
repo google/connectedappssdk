@@ -17,6 +17,8 @@ package com.google.android.enterprise.connectedapps;
 
 import static com.google.android.enterprise.connectedapps.CrossProfileSDKUtilities.filterUsersByAvailabilityRestrictions;
 import static com.google.android.enterprise.connectedapps.CrossProfileSDKUtilities.selectUserHandleToBind;
+import static java.util.Collections.newSetFromMap;
+import static java.util.Collections.synchronizedSet;
 import static java.util.concurrent.TimeUnit.MILLISECONDS;
 import static java.util.concurrent.TimeUnit.MINUTES;
 import static java.util.concurrent.TimeUnit.SECONDS;
@@ -223,28 +225,21 @@ public final class CrossProfileSender {
   // explicitConnectionHolders is emptied by the garbage collector but that won't cause issues
   private final AtomicBoolean explicitConnectionHoldersIsEmpty = new AtomicBoolean(true);
 
-  private final BroadcastReceiver profileAvailabilityReceiver =
-      new BroadcastReceiver() {
-        @Override
-        public void onReceive(Context context, Intent intent) {
-          scheduledExecutorService.execute(CrossProfileSender.this::checkAvailability);
-        }
-      };
-
   private final ServiceConnection connection =
       new ServiceConnection() {
 
         @Override
         public void onBindingDied(ComponentName name) {
           Log.e(LOG_TAG, "onBindingDied for component " + name);
-          attemptReconnect();
+          scheduledExecutorService.execute(
+              () -> onBindingAttemptFailed("onBindingDied", /* terminal= */ true));
         }
 
         @Override
         public void onNullBinding(ComponentName name) {
           Log.e(LOG_TAG, "onNullBinding for component " + name);
-          // We don't expect this is salvageable but it will fail the reconnect anyway
-          attemptReconnect();
+          scheduledExecutorService.execute(
+              () -> onBindingAttemptFailed("onNullBinding", /* terminal= */ true));
         }
 
         // Called when the connection with the service is established
@@ -290,6 +285,20 @@ public final class CrossProfileSender {
         }
       };
 
+  // This is synchronized which isn't massively performant but it only gets accessed once straight
+  // after creating a Sender, and once each time availability changes
+  private static final Set<CrossProfileSender> senders =
+      synchronizedSet(newSetFromMap(new WeakHashMap<>()));
+
+  private static final BroadcastReceiver profileAvailabilityReceiver = new BroadcastReceiver() {
+    @Override
+    public void onReceive(Context context, Intent intent) {
+      for (CrossProfileSender sender : senders) {
+        sender.scheduledExecutorService.execute(sender::checkAvailability);
+      }
+    }
+  };
+
   private final AtomicReference<ScheduledFuture<Void>> automaticDisconnectionFuture =
       new AtomicReference<>();
   private volatile @Nullable CountDownLatch manuallyBindLatch;
@@ -321,6 +330,9 @@ public final class CrossProfileSender {
     canUseReflectedApis = ReflectionUtilities.canUseReflectedApis();
     this.scheduledExecutorService = scheduledExecutorService;
     this.availabilityRestrictions = availabilityRestrictions;
+
+    senders.add(this);
+    beginMonitoringAvailabilityChanges();
   }
 
   private void cancelAutomaticDisconnection() {
@@ -355,7 +367,13 @@ public final class CrossProfileSender {
     return null;
   }
 
-  void beginMonitoringAvailabilityChanges() {
+  private static final AtomicBoolean isMonitoringAvailabilityChanges = new AtomicBoolean(false);
+
+  private void beginMonitoringAvailabilityChanges() {
+    if (isMonitoringAvailabilityChanges.getAndSet(true)) {
+      return;
+    }
+
     IntentFilter filter = new IntentFilter();
     filter.addAction(Intent.ACTION_MANAGED_PROFILE_UNLOCKED);
     filter.addAction(Intent.ACTION_MANAGED_PROFILE_AVAILABLE);
@@ -442,6 +460,10 @@ public final class CrossProfileSender {
 
   private void onBindingAttemptFailed(String reason, Exception exception) {
     onBindingAttemptFailed(reason, exception, /* terminal= */ false);
+  }
+
+  private void onBindingAttemptFailed(String reason, boolean terminal) {
+    onBindingAttemptFailed(reason, /* exception= */ null, terminal);
   }
 
   private void onBindingAttemptFailed(
@@ -866,5 +888,15 @@ public final class CrossProfileSender {
 
           connectionHolderAliases.put(key, aliases);
         });
+  }
+
+  /**
+   * Clear static state.
+   *
+   * <p>This should not be required in production.
+   */
+  public static void clearStaticState() {
+    isMonitoringAvailabilityChanges.set(false);
+    senders.clear();
   }
 }

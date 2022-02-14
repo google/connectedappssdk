@@ -25,6 +25,7 @@ import com.google.android.enterprise.connectedapps.CrossUserConnector;
 import com.google.android.enterprise.connectedapps.Permissions;
 import com.google.android.enterprise.connectedapps.ProfileConnectionHolder;
 import com.google.android.enterprise.connectedapps.exceptions.UnavailableProfileException;
+import java.util.concurrent.Executor;
 
 /**
  * A compatibility wrapper which allows an {@link AbstractFakeUserConnector} to be used in generated
@@ -44,6 +45,18 @@ public class FakeUserConnectorWrapper implements FakeProfileConnector {
   @Override
   public void timeoutConnection() {
     connector.timeoutConnection(handle);
+  }
+
+  @Override
+  public void setConnectionHandler(ConnectionHandler connectionHandler) {
+    // TODO(b/214511168): Implement it
+    throw new UnsupportedOperationException("Cannot set ConnectionHandler for UserConnector");
+  }
+
+  @Override
+  public void setExecutor(Executor executor) {
+    // TODO(b/214511168): Implement it
+    throw new UnsupportedOperationException("Cannot set Executor for UserConnector");
   }
 
   @Override

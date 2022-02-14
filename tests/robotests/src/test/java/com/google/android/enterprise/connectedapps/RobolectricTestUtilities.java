@@ -109,6 +109,7 @@ public class RobolectricTestUtilities {
   public void initTests() {
     TestCrossProfileType.voidMethodCalls = 0;
     CrossProfileSDKUtilities.clearCache();
+    CrossProfileSender.clearStaticState();
     createPersonalUser();
   }
 

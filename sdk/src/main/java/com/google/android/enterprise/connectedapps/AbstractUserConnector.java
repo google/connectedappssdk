@@ -173,7 +173,6 @@ public abstract class AbstractUserConnector implements UserConnector {
             /* availabilityListener= */ userHandleEventForwarder,
             scheduledExecutorService,
             availabilityRestrictions);
-    crossProfileSender.beginMonitoringAvailabilityChanges();
     UserConnection userConnection = UserConnection.create(binder, crossProfileSender);
     userConnections.put(userHandle, userConnection);
     return userConnection;

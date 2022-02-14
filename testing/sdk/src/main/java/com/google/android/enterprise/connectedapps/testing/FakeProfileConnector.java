@@ -16,6 +16,7 @@
 package com.google.android.enterprise.connectedapps.testing;
 
 import com.google.android.enterprise.connectedapps.ProfileConnector;
+import java.util.concurrent.Executor;
 
 /** Implemented by generated {@link ProfileConnector} fakes. */
 public interface FakeProfileConnector extends ProfileConnector {
@@ -29,6 +30,26 @@ public interface FakeProfileConnector extends ProfileConnector {
    * <p>If there are any connection holders, then this will do nothing.
    */
   void timeoutConnection();
+
+  /**
+   * Set the connection handler.
+   *
+   * <p>Upon attempting to connect, the connectionHandler is invoked. A return value of true
+   * simulates that the connection was successful, whereas a return value of false simulates that
+   * the connection failed.
+   *
+   * <p>If not set, the default connection handler always returns true (success).
+   */
+  void setConnectionHandler(ConnectionHandler connectionHandler);
+
+  /**
+   * Set the executor used for asynchronous operations.
+   *
+   * <p>If not set, all asynchronous operations will run synchronously.
+   *
+   * <p>Currently this only applies to calls to {@link #addConnectionHolder}.
+   */
+  void setExecutor(Executor executor);
 
   /**
    * Force the connector to be "automatically" connected.
@@ -49,4 +70,11 @@ public interface FakeProfileConnector extends ProfileConnector {
    * @hide
    */
   boolean hasExplicitConnectionHolders();
+
+  /** A connection handler which gets invoked when attempting to connect to the other profile. */
+  public interface ConnectionHandler {
+
+    /** Return whether the connection was successful. */
+    boolean tryConnect();
+  }
 }
