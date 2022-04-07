@@ -201,6 +201,10 @@ public final class EarlyValidator {
           + " methods annotated @CROSS_PROFILE_ANNOTATION";
   private static final String METHOD_STATICTYPES_ERROR =
       "@CROSS_PROFILE_PROVIDER_ANNOTATION annotations on methods can not specify staticTypes";
+  private static final String CACHEABLE_METHOD_NON_CROSS_PROFILE_ERROR =
+      "Methods annotated with @Cacheable must also be annotated with @CrossProfile";
+  private static final String CACHEABLE_METHOD_RETURNS_VOID_ERROR =
+      "Methods annotated with @Cacheable must return a non-void type";
 
   private final ValidatorContext validatorContext;
   private final TypeMirror contextType;
@@ -279,7 +283,8 @@ public final class EarlyValidator {
                 validatorContext.newCrossProfileCallbackInterfaces()),
             validateCrossProfileTests(validatorContext.newCrossProfileTests()),
             validateCustomParcelableWrappers(validatorContext.newCustomParcelableWrappers()),
-            validateCustomFutureWrappers(validatorContext.newCustomFutureWrappers()))
+            validateCustomFutureWrappers(validatorContext.newCustomFutureWrappers()),
+            validateCacheableMethods(validatorContext.newCacheableMethods()))
         .allMatch(b -> b);
   }
 
@@ -793,6 +798,32 @@ public final class EarlyValidator {
         && !crossProfileMethod.getReturnType().getKind().equals(TypeKind.VOID)) {
       isValid = false;
       showError(NON_VOID_CALLBACK_ERROR, crossProfileMethod);
+    }
+
+    return isValid;
+  }
+
+  private boolean validateCacheableMethods(Collection<ExecutableElement> cacheableMethods) {
+    boolean isValid = true;
+
+    for(ExecutableElement cacheableMethod : cacheableMethods) {
+      isValid = isValid && validateCacheableMethod(cacheableMethod);
+    }
+
+    return isValid;
+  }
+
+  private boolean validateCacheableMethod(ExecutableElement cacheableMethod) {
+    boolean isValid = true;
+
+    if (!hasCrossProfileAnnotation(cacheableMethod)) {
+      showError(CACHEABLE_METHOD_NON_CROSS_PROFILE_ERROR, cacheableMethod);
+      isValid = false;
+    }
+
+    if (cacheableMethod.getReturnType().getKind() == TypeKind.VOID) {
+      showError(CACHEABLE_METHOD_RETURNS_VOID_ERROR, cacheableMethod);
+      isValid = false;
     }
 
     return isValid;

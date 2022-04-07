@@ -39,4 +39,6 @@ public interface AnnotationClasses {
   Class<? extends Annotation> crossProfileProviderAnnotationClass();
 
   Class<? extends Annotation> crossProfileTestAnnotationClass();
+
+  Class<? extends Annotation> cacheableAnnotationClass();
 }

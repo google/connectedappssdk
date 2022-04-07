@@ -57,6 +57,8 @@ public abstract class ValidatorContext extends Context {
 
   public abstract ImmutableSet<ExecutableElement> newCrossProfileMethods();
 
+  public abstract ImmutableSet<ExecutableElement> newCacheableMethods();
+
   public abstract ImmutableSet<ValidatorProviderClassInfo> newProviderClasses();
 
   public abstract ImmutableSet<ExecutableElement> newProviderMethods();
@@ -100,6 +102,9 @@ public abstract class ValidatorContext extends Context {
 
     public abstract Builder setNewCrossProfileMethods(
         Collection<ExecutableElement> newCrossProfileMethods);
+
+    public abstract Builder setNewCacheableMethods(
+        Collection<ExecutableElement> newCacheableMethods);
 
     public abstract Builder setNewProviderClasses(
         Collection<ValidatorProviderClassInfo> newProviderClasses);
