@@ -19,6 +19,7 @@ import static com.google.android.enterprise.connectedapps.processor.annotationdi
 import static java.util.stream.Collectors.joining;
 import static java.util.stream.Collectors.toSet;
 
+import com.google.android.enterprise.connectedapps.annotations.Cacheable;
 import com.google.android.enterprise.connectedapps.annotations.CrossProfile;
 import com.google.android.enterprise.connectedapps.annotations.CrossProfileCallback;
 import com.google.android.enterprise.connectedapps.processor.SupportedTypes;
@@ -46,6 +47,8 @@ public abstract class CrossProfileMethodInfo {
   public abstract int identifier();
 
   public abstract boolean isStatic();
+
+  public abstract boolean isCacheable();
 
   public String simpleName() {
     return methodElement().getSimpleName().toString();
@@ -201,6 +204,9 @@ public abstract class CrossProfileMethodInfo {
       ExecutableElement methodElement,
       Context context) {
     return new AutoValue_CrossProfileMethodInfo(
-        methodElement, identifier, methodElement.getModifiers().contains(Modifier.STATIC));
+        methodElement,
+        identifier,
+        methodElement.getModifiers().contains(Modifier.STATIC),
+        methodElement.getAnnotation(Cacheable.class) != null);
   }
 }
