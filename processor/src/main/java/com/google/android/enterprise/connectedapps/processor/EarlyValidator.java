@@ -48,6 +48,7 @@ import com.google.android.enterprise.connectedapps.processor.containers.Validato
 import com.squareup.javapoet.ClassName;
 import com.squareup.javapoet.ParameterizedTypeName;
 import com.squareup.javapoet.TypeName;
+import java.io.Serializable;
 import java.util.Arrays;
 import java.util.Collection;
 import java.util.HashSet;
@@ -205,6 +206,8 @@ public final class EarlyValidator {
       "Methods annotated with @Cacheable must also be annotated with @CrossProfile";
   private static final String CACHEABLE_METHOD_RETURNS_VOID_ERROR =
       "Methods annotated with @Cacheable must return a non-void type";
+  private static final String CACHEABLE_METHOD_RETURNS_NON_SERIALIZABLE_ERROR =
+      "Methods annotated with @Cacheable must return a type which implements Serializable";
 
   private final ValidatorContext validatorContext;
   private final TypeMirror contextType;
@@ -806,7 +809,7 @@ public final class EarlyValidator {
   private boolean validateCacheableMethods(Collection<ExecutableElement> cacheableMethods) {
     boolean isValid = true;
 
-    for(ExecutableElement cacheableMethod : cacheableMethods) {
+    for (ExecutableElement cacheableMethod : cacheableMethods) {
       isValid = isValid && validateCacheableMethod(cacheableMethod);
     }
 
@@ -816,13 +819,23 @@ public final class EarlyValidator {
   private boolean validateCacheableMethod(ExecutableElement cacheableMethod) {
     boolean isValid = true;
 
+    TypeMirror returnType = cacheableMethod.getReturnType();
+
     if (!hasCrossProfileAnnotation(cacheableMethod)) {
       showError(CACHEABLE_METHOD_NON_CROSS_PROFILE_ERROR, cacheableMethod);
       isValid = false;
     }
 
-    if (cacheableMethod.getReturnType().getKind() == TypeKind.VOID) {
+    if (returnType.getKind().equals(TypeKind.VOID)) {
       showError(CACHEABLE_METHOD_RETURNS_VOID_ERROR, cacheableMethod);
+      isValid = false;
+    }
+
+    TypeMirror serializable =
+        validatorContext.elements().getTypeElement(Serializable.class.getCanonicalName()).asType();
+
+    if (!validatorContext.types().isAssignable(returnType, serializable)) {
+      showError(CACHEABLE_METHOD_RETURNS_NON_SERIALIZABLE_ERROR, cacheableMethod);
       isValid = false;
     }
 
