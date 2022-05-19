@@ -164,9 +164,6 @@ public abstract class AnnotationStrings
   @Override
   public abstract Class<? extends Annotation> crossProfileTestAnnotationClass();
 
-  @Override
-  public abstract Class<? extends Annotation> cacheableAnnotationClass();
-
   static Builder builder() {
     return new AutoValue_AnnotationStrings.Builder();
   }
@@ -185,8 +182,6 @@ public abstract class AnnotationStrings
     abstract Builder setCrossProfileProviderAnnotationClass(Class<? extends Annotation> value);
 
     abstract Builder setCrossProfileTestAnnotationClass(Class<? extends Annotation> value);
-
-    abstract Builder setCacheableAnnotationClass(Class<? extends Annotation> value);
 
     abstract AnnotationStrings build();
   }

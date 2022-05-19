@@ -17,6 +17,10 @@ package com.google.android.enterprise.connectedapps.processor;
 
 import static com.google.android.enterprise.connectedapps.processor.CommonClassNames.PARCELABLE_CREATOR_CLASSNAME;
 import static com.google.android.enterprise.connectedapps.processor.GeneratorUtilities.findCrossProfileMethodsInClass;
+import static com.google.android.enterprise.connectedapps.processor.TypeUtils.extractTypeArguments;
+import static com.google.android.enterprise.connectedapps.processor.TypeUtils.getRawTypeClassName;
+import static com.google.android.enterprise.connectedapps.processor.TypeUtils.getRawTypeQualifiedName;
+import static com.google.android.enterprise.connectedapps.processor.TypeUtils.removeTypeArguments;
 import static com.google.android.enterprise.connectedapps.processor.annotationdiscovery.AnnotationFinder.hasCrossProfileAnnotation;
 import static com.google.android.enterprise.connectedapps.processor.annotationdiscovery.AnnotationFinder.hasCrossProfileConfigurationAnnotation;
 import static com.google.android.enterprise.connectedapps.processor.annotationdiscovery.AnnotationFinder.hasCrossProfileConfigurationsAnnotation;
@@ -26,6 +30,7 @@ import static com.google.android.enterprise.connectedapps.processor.annotationdi
 import static java.util.stream.Collectors.toMap;
 import static java.util.stream.Collectors.toSet;
 
+import com.google.android.enterprise.connectedapps.annotations.Cacheable;
 import com.google.android.enterprise.connectedapps.annotations.CustomFutureWrapper;
 import com.google.android.enterprise.connectedapps.annotations.CustomParcelableWrapper;
 import com.google.android.enterprise.connectedapps.annotations.CustomProfileConnector;
@@ -202,12 +207,16 @@ public final class EarlyValidator {
           + " methods annotated @CROSS_PROFILE_ANNOTATION";
   private static final String METHOD_STATICTYPES_ERROR =
       "@CROSS_PROFILE_PROVIDER_ANNOTATION annotations on methods can not specify staticTypes";
-  private static final String CACHEABLE_METHOD_NON_CROSS_PROFILE_ERROR =
-      "Methods annotated with @Cacheable must also be annotated with @CrossProfile";
   private static final String CACHEABLE_METHOD_RETURNS_VOID_ERROR =
       "Methods annotated with @Cacheable must return a non-void type";
   private static final String CACHEABLE_METHOD_RETURNS_NON_SERIALIZABLE_ERROR =
-      "Methods annotated with @Cacheable must return a type which implements Serializable";
+      "Methods annotated with @Cacheable must return a type which implements Serializable, return"
+          + " a future with a Serializable result or return void with a simple callback parameter.";
+  private static final String CACHEABLE_METHOD_NON_SIMPLE_CALLBACK_ERROR =
+      "Methods annotated with @Cacheable may only have a callback parameter which is simple.";
+  private static final String CACHEABLE_METHOD_USES_INVALID_PARAMETERS_ERROR =
+      "Methods annotated with @Cacheable may only use callbacks that take a single Serializable"
+          + " parameter.";
 
   private final ValidatorContext validatorContext;
   private final TypeMirror contextType;
@@ -286,8 +295,7 @@ public final class EarlyValidator {
                 validatorContext.newCrossProfileCallbackInterfaces()),
             validateCrossProfileTests(validatorContext.newCrossProfileTests()),
             validateCustomParcelableWrappers(validatorContext.newCustomParcelableWrappers()),
-            validateCustomFutureWrappers(validatorContext.newCustomFutureWrappers()),
-            validateCacheableMethods(validatorContext.newCacheableMethods()))
+            validateCustomFutureWrappers(validatorContext.newCustomFutureWrappers()))
         .allMatch(b -> b);
   }
 
@@ -752,6 +760,11 @@ public final class EarlyValidator {
         isValid
             && validateReturnType(crossProfileType, crossProfileMethod)
             && validateParameterTypesForCrossProfileMethod(crossProfileType, crossProfileMethod);
+
+    if (crossProfileMethod.getAnnotation(Cacheable.class) != null) {
+      isValid = isValid && validateCacheableMethod(crossProfileType, crossProfileMethod);
+    }
+
     return isValid;
   }
 
@@ -801,42 +814,6 @@ public final class EarlyValidator {
         && !crossProfileMethod.getReturnType().getKind().equals(TypeKind.VOID)) {
       isValid = false;
       showError(NON_VOID_CALLBACK_ERROR, crossProfileMethod);
-    }
-
-    return isValid;
-  }
-
-  private boolean validateCacheableMethods(Collection<ExecutableElement> cacheableMethods) {
-    boolean isValid = true;
-
-    for (ExecutableElement cacheableMethod : cacheableMethods) {
-      isValid = isValid && validateCacheableMethod(cacheableMethod);
-    }
-
-    return isValid;
-  }
-
-  private boolean validateCacheableMethod(ExecutableElement cacheableMethod) {
-    boolean isValid = true;
-
-    TypeMirror returnType = cacheableMethod.getReturnType();
-
-    if (!hasCrossProfileAnnotation(cacheableMethod)) {
-      showError(CACHEABLE_METHOD_NON_CROSS_PROFILE_ERROR, cacheableMethod);
-      isValid = false;
-    }
-
-    if (returnType.getKind().equals(TypeKind.VOID)) {
-      showError(CACHEABLE_METHOD_RETURNS_VOID_ERROR, cacheableMethod);
-      isValid = false;
-    }
-
-    TypeMirror serializable =
-        validatorContext.elements().getTypeElement(Serializable.class.getCanonicalName()).asType();
-
-    if (!validatorContext.types().isAssignable(returnType, serializable)) {
-      showError(CACHEABLE_METHOD_RETURNS_NON_SERIALIZABLE_ERROR, cacheableMethod);
-      isValid = false;
     }
 
     return isValid;
@@ -982,6 +959,89 @@ public final class EarlyValidator {
     return isValid;
   }
 
+  private boolean validateCacheableMethod(
+      ValidatorCrossProfileTypeInfo crossProfileTypeInfo, ExecutableElement cacheableMethod) {
+    boolean isValid = true;
+
+    TypeMirror returnType = cacheableMethod.getReturnType();
+
+    if (returnType.getKind().equals(TypeKind.VOID)) {
+      isValid = isValid && validateCallbackOnCacheableMethod(cacheableMethod);
+    } else if (!isSerializable(crossProfileTypeInfo, returnType)) {
+      showError(CACHEABLE_METHOD_RETURNS_NON_SERIALIZABLE_ERROR, cacheableMethod);
+      isValid = false;
+    }
+
+    return isValid;
+  }
+
+  private boolean isSerializable(
+      ValidatorCrossProfileTypeInfo crossProfileTypeInfo, TypeMirror type) {
+    return isSerializable(type) || isFutureWithSerializableResult(crossProfileTypeInfo, type);
+  }
+
+  private boolean isSerializable(TypeMirror type) {
+    TypeMirror serializable =
+        validatorContext.elements().getTypeElement(Serializable.class.getCanonicalName()).asType();
+
+    return validatorContext.types().isAssignable(type, serializable);
+  }
+
+  private boolean isFutureWithSerializableResult(
+      ValidatorCrossProfileTypeInfo crossProfileType, TypeMirror type) {
+
+    if (!crossProfileType.supportedTypes().isFuture(removeTypeArguments(type))) {
+      return false;
+    }
+
+    TypeMirror futureResult = extractTypeArguments(type).get(0);
+
+    return isSerializable(futureResult);
+  }
+
+  private boolean validateCallbackOnCacheableMethod(ExecutableElement cacheableMethod) {
+    boolean isValid = true;
+
+    if (!hasCallback(cacheableMethod)) {
+      showError(CACHEABLE_METHOD_RETURNS_VOID_ERROR, cacheableMethod);
+      return false;
+    }
+
+    TypeElement callback =
+        cacheableMethod.getParameters().stream()
+            .map(v -> validatorContext.elements().getTypeElement(v.asType().toString()))
+            .filter(Objects::nonNull)
+            .filter(AnnotationFinder::hasCrossProfileCallbackAnnotation)
+            .findFirst()
+            .get();
+
+    CrossProfileCallbackAnnotationInfo annotationInfo =
+        AnnotationFinder.extractCrossProfileCallbackAnnotationInfo(validatorContext, callback);
+    if (!annotationInfo.simple()) {
+      showError(CACHEABLE_METHOD_NON_SIMPLE_CALLBACK_ERROR, cacheableMethod);
+      isValid = false;
+    }
+
+    ExecutableElement method = getMethods(callback).stream().findFirst().get();
+    if (!hasSingleSerializableParameterOnly(method)) {
+      showError(CACHEABLE_METHOD_USES_INVALID_PARAMETERS_ERROR, cacheableMethod);
+      isValid = false;
+    }
+
+    return isValid;
+  }
+
+  private boolean hasCallback(ExecutableElement method) {
+    return method.getParameters().stream()
+        .map(v -> validatorContext.elements().getTypeElement(v.asType().toString()))
+        .filter(Objects::nonNull)
+        .anyMatch(AnnotationFinder::hasCrossProfileCallbackAnnotation);
+  }
+
+  private boolean hasSingleSerializableParameterOnly(ExecutableElement method) {
+    return method.getParameters().stream().filter(p -> isSerializable(p.asType())).count() == 1;
+  }
+
   private boolean validateCrossProfileTests(
       Collection<ValidatorCrossProfileTestInfo> crossProfileTests) {
     return crossProfileTests.stream().allMatch(this::validateCrossProfileTest);
@@ -1010,10 +1070,9 @@ public final class EarlyValidator {
       isValid = false;
     }
 
-    ClassName parcelableWrapperRawType =
-        TypeUtils.getRawTypeClassName(customParcelableWrapper.asType());
+    ClassName parcelableWrapperRawType = getRawTypeClassName(customParcelableWrapper.asType());
     ClassName wrappedParamRawType =
-        TypeUtils.getRawTypeClassName(
+        getRawTypeClassName(
             ParcelableWrapperAnnotationInfo.extractFromParcelableWrapperAnnotation(
                     validatorContext,
                     customParcelableWrapper.getAnnotation(CustomParcelableWrapper.class))
@@ -1029,8 +1088,8 @@ public final class EarlyValidator {
             // the method is returning the correct generic type
             .filter(
                 p ->
-                    TypeUtils.getRawTypeClassName(p.getReturnType())
-                        .equals(TypeUtils.getRawTypeClassName(customParcelableWrapper.asType())))
+                    getRawTypeClassName(p.getReturnType())
+                        .equals(getRawTypeClassName(customParcelableWrapper.asType())))
             .filter(p -> ofMethodHasExpectedArguments(wrappedParamRawType, p))
             .findFirst();
 
@@ -1046,8 +1105,7 @@ public final class EarlyValidator {
             .filter(p -> p.getSimpleName().contentEquals("get"))
             // We drop generics as without being overly prescriptive it's impossible to know that
             // the method is returning the correct generic type
-            .filter(
-                p -> TypeUtils.getRawTypeClassName(p.getReturnType()).equals(wrappedParamRawType))
+            .filter(p -> getRawTypeClassName(p.getReturnType()).equals(wrappedParamRawType))
             .findFirst();
 
     if (!getMethod.isPresent()) {
@@ -1094,7 +1152,7 @@ public final class EarlyValidator {
       return false;
     }
 
-    if (!TypeUtils.getRawTypeClassName(parameters.get(2).asType()).equals(wrappedParamRawType)) {
+    if (!getRawTypeClassName(parameters.get(2).asType()).equals(wrappedParamRawType)) {
       return false;
     }
 
@@ -1109,13 +1167,13 @@ public final class EarlyValidator {
     boolean isValid = true;
 
     ClassName wrappedFutureRawType =
-        TypeUtils.getRawTypeClassName(
+        getRawTypeClassName(
             FutureWrapperAnnotationInfo.extractFromFutureWrapperAnnotation(
                     validatorContext, futureWrapper.getAnnotation(CustomFutureWrapper.class))
                 .originalType()
                 .asType());
 
-    if (!TypeUtils.getRawTypeQualifiedName(futureWrapper.getSuperclass())
+    if (!getRawTypeQualifiedName(futureWrapper.getSuperclass())
         .equals("com.google.android.enterprise.connectedapps.FutureWrapper")) {
       showError(DOES_NOT_EXTEND_FUTURE_WRAPPER_ERROR, futureWrapper);
       isValid = false;
@@ -1137,8 +1195,8 @@ public final class EarlyValidator {
             // the method is returning the correct generic type
             .filter(
                 e ->
-                    TypeUtils.getRawTypeClassName(e.getReturnType())
-                        .equals(TypeUtils.getRawTypeClassName(futureWrapper.asType())))
+                    getRawTypeClassName(e.getReturnType())
+                        .equals(getRawTypeClassName(futureWrapper.asType())))
             .filter(this::createMethodHasExpectedArguments)
             .findFirst();
 
@@ -1156,8 +1214,7 @@ public final class EarlyValidator {
             .filter(e -> !e.getModifiers().contains(Modifier.STATIC))
             // We drop generics as without being overly prescriptive it's impossible to know that
             // the method is returning the correct generic type
-            .filter(
-                e -> TypeUtils.getRawTypeClassName(e.getReturnType()).equals(wrappedFutureRawType))
+            .filter(e -> getRawTypeClassName(e.getReturnType()).equals(wrappedFutureRawType))
             .filter(e -> e.getParameters().isEmpty())
             .findFirst();
 
@@ -1204,19 +1261,17 @@ public final class EarlyValidator {
   private boolean groupResultsMethodHasExpectedReturnType(
       ExecutableElement groupResultsMethod, ClassName wrappedFutureRawType) {
 
-    if (!TypeUtils.getRawTypeClassName(groupResultsMethod.getReturnType())
-        .equals(wrappedFutureRawType)) {
+    if (!getRawTypeClassName(groupResultsMethod.getReturnType()).equals(wrappedFutureRawType)) {
       return false;
     }
 
-    TypeMirror wrappedReturnType =
-        TypeUtils.extractTypeArguments(groupResultsMethod.getReturnType()).get(0);
+    TypeMirror wrappedReturnType = extractTypeArguments(groupResultsMethod.getReturnType()).get(0);
 
-    if (!TypeUtils.getRawTypeClassName(wrappedReturnType).equals(ClassName.get(Map.class))) {
+    if (!getRawTypeClassName(wrappedReturnType).equals(ClassName.get(Map.class))) {
       return false;
     }
 
-    TypeMirror wrappedReturnTypeKey = TypeUtils.extractTypeArguments(wrappedReturnType).get(0);
+    TypeMirror wrappedReturnTypeKey = extractTypeArguments(wrappedReturnType).get(0);
 
     if (!validatorContext.types().isSameType(wrappedReturnTypeKey, profileType)) {
       return false;
@@ -1233,11 +1288,11 @@ public final class EarlyValidator {
 
     TypeMirror param = groupResultsMethod.getParameters().get(0).asType();
 
-    if (!TypeUtils.getRawTypeClassName(param).equals(ClassName.get(Map.class))) {
+    if (!getRawTypeClassName(param).equals(ClassName.get(Map.class))) {
       return false;
     }
 
-    List<TypeMirror> params = TypeUtils.extractTypeArguments(param);
+    List<TypeMirror> params = extractTypeArguments(param);
 
     TypeMirror keyParam = params.get(0);
     TypeMirror valueParam = params.get(1);
@@ -1246,7 +1301,7 @@ public final class EarlyValidator {
       return false;
     }
 
-    if (!TypeUtils.getRawTypeClassName(valueParam).equals(wrappedFutureRawType)) {
+    if (!getRawTypeClassName(valueParam).equals(wrappedFutureRawType)) {
       return false;
     }
 
@@ -1279,16 +1334,14 @@ public final class EarlyValidator {
       return false;
     }
 
-    if (!TypeUtils.getRawTypeClassName(method.getParameters().get(0).asType())
-        .equals(wrappedFutureRawType)) {
+    if (!getRawTypeClassName(method.getParameters().get(0).asType()).equals(wrappedFutureRawType)) {
       return false;
     }
 
     if (!validatorContext
         .types()
         .isAssignable(
-            TypeUtils.removeTypeArguments(method.getParameters().get(1).asType()),
-            futureResultWriterType)) {
+            removeTypeArguments(method.getParameters().get(1).asType()), futureResultWriterType)) {
       return false;
     }
 

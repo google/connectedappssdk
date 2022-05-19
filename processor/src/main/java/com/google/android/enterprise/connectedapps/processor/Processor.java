@@ -15,7 +15,6 @@
  */
 package com.google.android.enterprise.connectedapps.processor;
 
-import static com.google.android.enterprise.connectedapps.processor.annotationdiscovery.AnnotationFinder.elementsAnnotatedWithCacheable;
 import static com.google.android.enterprise.connectedapps.processor.annotationdiscovery.AnnotationFinder.elementsAnnotatedWithCrossProfile;
 import static com.google.android.enterprise.connectedapps.processor.annotationdiscovery.AnnotationFinder.elementsAnnotatedWithCrossProfileCallback;
 import static com.google.android.enterprise.connectedapps.processor.annotationdiscovery.AnnotationFinder.elementsAnnotatedWithCrossProfileConfiguration;
@@ -106,7 +105,6 @@ public final class Processor extends AbstractProcessor {
     Collection<ExecutableElement> newProviderMethods = findNewProviderMethods(roundEnv);
     Collection<TypeElement> newGeneratedConnectors = findNewGeneratedConnectors(roundEnv);
     Collection<TypeElement> newGeneratedUserConnectors = findNewGeneratedUserConnectors(roundEnv);
-    Collection<ExecutableElement> newCacheableMethods = findNewCacheableMethods(roundEnv);
     Collection<ExecutableElement> newCrossProfileMethods = findNewCrossProfileMethods(roundEnv);
     Collection<ExecutableElement> allCrossProfileMethods =
         findAllCrossProfileMethods(
@@ -156,7 +154,6 @@ public final class Processor extends AbstractProcessor {
             .setNewConfigurations(newConfigurations)
             .setNewCrossProfileTypes(newCrossProfileTypes)
             .setNewCrossProfileMethods(newCrossProfileMethods)
-            .setNewCacheableMethods(newCacheableMethods)
             .setNewProviderClasses(newProviderClasses)
             .setNewProviderMethods(newProviderMethods)
             .setNewCrossProfileCallbackInterfaces(newCrossProfileCallbackInterfaces)
@@ -282,13 +279,6 @@ public final class Processor extends AbstractProcessor {
 
   private Collection<ExecutableElement> findNewCrossProfileMethods(RoundEnvironment roundEnv) {
     return elementsAnnotatedWithCrossProfile(roundEnv)
-        .filter(m -> m instanceof ExecutableElement)
-        .map(m -> (ExecutableElement) m)
-        .collect(toSet());
-  }
-
-  private Collection<ExecutableElement> findNewCacheableMethods(RoundEnvironment roundEnv) {
-    return elementsAnnotatedWithCacheable(roundEnv)
         .filter(m -> m instanceof ExecutableElement)
         .map(m -> (ExecutableElement) m)
         .collect(toSet());

@@ -498,6 +498,42 @@ final class TestUtilities {
         "}");
   }
 
+  public static JavaFileObject installationListenerSimple(AnnotationPrinter annotationPrinter) {
+    return JavaFileObjects.forSourceLines(
+        NOTES_PACKAGE + ".InstallationListener",
+        "package " + NOTES_PACKAGE + ";",
+        "import " + annotationPrinter.crossProfileCallbackQualifiedName() + ";",
+        annotationPrinter.crossProfileCallbackAsAnnotation("simple=true"),
+        "public interface InstallationListener {",
+        "  void installationComplete();",
+        "}");
+  }
+
+  public static JavaFileObject installationListenerSimpleWithStringParam(
+      AnnotationPrinter annotationPrinter) {
+    return JavaFileObjects.forSourceLines(
+        NOTES_PACKAGE + ".InstallationListener",
+        "package " + NOTES_PACKAGE + ";",
+        "import " + annotationPrinter.crossProfileCallbackQualifiedName() + ";",
+        annotationPrinter.crossProfileCallbackAsAnnotation("simple=true"),
+        "public interface InstallationListener {",
+        "  void installationComplete(String s);",
+        "}");
+  }
+
+  public static JavaFileObject installationListenerSimpleWithIntentParam(
+      AnnotationPrinter annotationPrinter) {
+    return JavaFileObjects.forSourceLines(
+        NOTES_PACKAGE + ".InstallationListener",
+        "package " + NOTES_PACKAGE + ";",
+        "import android.content.Intent;",
+        "import " + annotationPrinter.crossProfileCallbackQualifiedName() + ";",
+        annotationPrinter.crossProfileCallbackAsAnnotation("simple=true"),
+        "public interface InstallationListener {",
+        "  void installationComplete(Intent i);",
+        "}");
+  }
+
   public static JavaFileObject installationListenerWithStringParam(
       AnnotationPrinter annotationPrinter) {
     return JavaFileObjects.forSourceLines(

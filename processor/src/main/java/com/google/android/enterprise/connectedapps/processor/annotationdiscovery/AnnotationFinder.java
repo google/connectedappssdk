@@ -18,7 +18,6 @@ package com.google.android.enterprise.connectedapps.processor.annotationdiscover
 import static java.util.stream.Collectors.toSet;
 import static javax.lang.model.element.ElementKind.METHOD;
 
-import com.google.android.enterprise.connectedapps.annotations.Cacheable;
 import com.google.android.enterprise.connectedapps.annotations.CrossProfile;
 import com.google.android.enterprise.connectedapps.annotations.CrossProfileCallback;
 import com.google.android.enterprise.connectedapps.annotations.CrossProfileConfiguration;
@@ -60,7 +59,6 @@ public final class AnnotationFinder {
           .setCrossProfileConfigurationsAnnotationClass(CrossProfileConfigurations.class)
           .setCrossProfileProviderAnnotationClass(CrossProfileProvider.class)
           .setCrossProfileTestAnnotationClass(CrossProfileTest.class)
-          .setCacheableAnnotationClass(Cacheable.class)
           .build();
 
   private static final AnnotationStrings CROSS_USER_ANNOTATION_STRINGS =
@@ -71,7 +69,6 @@ public final class AnnotationFinder {
           .setCrossProfileConfigurationAnnotationClass(CrossUserConfiguration.class)
           .setCrossProfileConfigurationsAnnotationClass(CrossUserConfigurations.class)
           .setCrossProfileTestAnnotationClass(CrossUserTest.class)
-          .setCacheableAnnotationClass(Cacheable.class)
           .build();
 
   private static final ImmutableList<AnnotationStrings> SUPPORTED_ANNOTATIONS =
@@ -96,9 +93,6 @@ public final class AnnotationFinder {
 
   private static final Set<Class<? extends Annotation>> crossProfileTestAnnotations =
       annotationsOfType(AnnotationClasses::crossProfileTestAnnotationClass);
-
-  private static final Set<Class<? extends  Annotation>> cacheableAnnotations =
-      annotationsOfType(AnnotationClasses::cacheableAnnotationClass);
 
   public static Iterable<AnnotationStrings> annotationStrings() {
     return SUPPORTED_ANNOTATIONS;
@@ -160,8 +154,7 @@ public final class AnnotationFinder {
             element, annotationClasses.crossProfileConfigurationAnnotationClass())
         || hasAnnotationOfClass(
             element, annotationClasses.crossProfileConfigurationsAnnotationClass())
-        || hasAnnotationOfClass(element, annotationClasses.crossProfileTestAnnotationClass())
-        || hasAnnotationOfClass(element, annotationClasses.cacheableAnnotationClass());
+        || hasAnnotationOfClass(element, annotationClasses.crossProfileTestAnnotationClass());
   }
 
   private static boolean hasAnnotationOfClass(
@@ -233,11 +226,6 @@ public final class AnnotationFinder {
   public static Stream<? extends Element> elementsAnnotatedWithCrossProfile(
       RoundEnvironment roundEnv) {
     return findElementsContainingAnnotations(roundEnv, crossProfileAnnotations);
-  }
-
-  public static Stream<? extends Element> elementsAnnotatedWithCacheable(
-      RoundEnvironment roundEnv) {
-    return findElementsContainingAnnotations(roundEnv, cacheableAnnotations);
   }
 
   public static Stream<? extends Element> elementsAnnotatedWithCrossProfileCallback(
