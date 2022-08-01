@@ -26,6 +26,7 @@ import static com.google.common.base.Preconditions.checkNotNull;
 
 import com.google.android.enterprise.connectedapps.processor.containers.CrossProfileTypeInfo;
 import com.google.android.enterprise.connectedapps.processor.containers.GeneratorContext;
+import com.google.errorprone.annotations.CanIgnoreReturnValue;
 import com.squareup.javapoet.ClassName;
 import com.squareup.javapoet.FieldSpec;
 import com.squareup.javapoet.MethodSpec;
@@ -216,6 +217,7 @@ final class FakeCrossUserTypeGenerator {
                     .build())
             .addMethod(
                 MethodSpec.methodBuilder("user")
+                    .addAnnotation(CanIgnoreReturnValue.class)
                     .addModifiers(Modifier.PUBLIC)
                     .addParameter(USER_HANDLE_CLASSNAME, "userHandle")
                     .addParameter(crossUserType.className(), targetTypeName)
@@ -225,6 +227,7 @@ final class FakeCrossUserTypeGenerator {
                     .build())
             .addMethod(
                 MethodSpec.methodBuilder("connector")
+                    .addAnnotation(CanIgnoreReturnValue.class)
                     .addModifiers(Modifier.PUBLIC)
                     .addParameter(fakeUserConnectorClassName, "connector")
                     .returns(builderClassName)

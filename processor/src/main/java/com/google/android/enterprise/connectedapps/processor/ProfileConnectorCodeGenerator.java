@@ -30,6 +30,7 @@ import com.google.android.enterprise.connectedapps.annotations.CustomProfileConn
 import com.google.android.enterprise.connectedapps.annotations.GeneratedProfileConnector;
 import com.google.android.enterprise.connectedapps.processor.containers.GeneratorContext;
 import com.google.android.enterprise.connectedapps.processor.containers.ProfileConnectorInfo;
+import com.google.errorprone.annotations.CanIgnoreReturnValue;
 import com.squareup.javapoet.ClassName;
 import com.squareup.javapoet.CodeBlock;
 import com.squareup.javapoet.FieldSpec;
@@ -146,6 +147,7 @@ class ProfileConnectorCodeGenerator {
 
     classBuilder.addMethod(
         MethodSpec.methodBuilder("setScheduledExecutorService")
+            .addAnnotation(CanIgnoreReturnValue.class)
             .addModifiers(Modifier.PUBLIC)
             .addParameter(SCHEDULED_EXECUTOR_SERVICE_CLASSNAME, "scheduledExecutorService")
             .returns(builderClassName)
@@ -156,6 +158,7 @@ class ProfileConnectorCodeGenerator {
 
     classBuilder.addMethod(
         MethodSpec.methodBuilder("setBinder")
+            .addAnnotation(CanIgnoreReturnValue.class)
             .addModifiers(Modifier.PUBLIC)
             .addParameter(CONNECTION_BINDER_CLASSNAME, "binder")
             .returns(builderClassName)

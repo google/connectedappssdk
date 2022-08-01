@@ -29,6 +29,7 @@ import static com.google.common.base.Preconditions.checkNotNull;
 import com.google.android.enterprise.connectedapps.annotations.GeneratedUserConnector;
 import com.google.android.enterprise.connectedapps.processor.containers.GeneratorContext;
 import com.google.android.enterprise.connectedapps.processor.containers.UserConnectorInfo;
+import com.google.errorprone.annotations.CanIgnoreReturnValue;
 import com.squareup.javapoet.ClassName;
 import com.squareup.javapoet.CodeBlock;
 import com.squareup.javapoet.FieldSpec;
@@ -135,6 +136,7 @@ class UserConnectorCodeGenerator {
 
     classBuilder.addMethod(
         MethodSpec.methodBuilder("setBinderFactory")
+            .addAnnotation(CanIgnoreReturnValue.class)
             .addModifiers(Modifier.PUBLIC)
             .addParameter(USER_BINDER_FACTORY_CLASSNAME, "binderFactory")
             .returns(builderClassName)
@@ -144,6 +146,7 @@ class UserConnectorCodeGenerator {
 
     classBuilder.addMethod(
         MethodSpec.methodBuilder("setScheduledExecutorService")
+            .addAnnotation(CanIgnoreReturnValue.class)
             .addModifiers(Modifier.PUBLIC)
             .addParameter(SCHEDULED_EXECUTOR_SERVICE_CLASSNAME, "scheduledExecutorService")
             .returns(builderClassName)

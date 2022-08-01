@@ -33,6 +33,7 @@ import com.google.android.enterprise.connectedapps.annotations.CustomProfileConn
 import com.google.android.enterprise.connectedapps.annotations.CustomProfileConnector.ProfileType;
 import com.google.android.enterprise.connectedapps.processor.containers.CrossProfileTypeInfo;
 import com.google.android.enterprise.connectedapps.processor.containers.GeneratorContext;
+import com.google.errorprone.annotations.CanIgnoreReturnValue;
 import com.squareup.javapoet.ArrayTypeName;
 import com.squareup.javapoet.ClassName;
 import com.squareup.javapoet.CodeBlock;
@@ -323,6 +324,7 @@ class FakeCrossProfileTypeGenerator {
             .addJavadoc(
                 "Set the {@link $T} to be used to manage the state of this fake.\n",
                 fakeProfileConnectorClassName)
+            .addAnnotation(CanIgnoreReturnValue.class)
             .addModifiers(Modifier.PUBLIC)
             .returns(builderClassName)
             .addParameter(fakeProfileConnectorClassName, "connector")
@@ -365,6 +367,7 @@ class FakeCrossProfileTypeGenerator {
                 "Set the {@link $T} to be used when a call needs to be made to the personal"
                     + " profile.\n",
                 crossProfileType.className())
+            .addAnnotation(CanIgnoreReturnValue.class)
             .addModifiers(Modifier.PUBLIC)
             .returns(builderClassName)
             .addParameter(crossProfileType.className(), "personal")
@@ -382,6 +385,7 @@ class FakeCrossProfileTypeGenerator {
             .addJavadoc(
                 "Set the {@link $T} to be used when a call needs to be made to the work profile.\n",
                 crossProfileType.className())
+            .addAnnotation(CanIgnoreReturnValue.class)
             .addModifiers(Modifier.PUBLIC)
             .returns(builderClassName)
             .addParameter(crossProfileType.className(), "work")
