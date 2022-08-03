@@ -20,9 +20,11 @@ import static org.junit.Assert.assertThrows;
 
 import android.app.Application;
 import androidx.test.core.app.ApplicationProvider;
+import com.google.android.enterprise.connectedapps.ProfileConnectionHolder;
 import com.google.android.enterprise.connectedapps.exceptions.UnavailableProfileException;
 import com.google.android.enterprise.connectedapps.instrumented.utils.InstrumentedTestUtilities;
 import com.google.android.enterprise.connectedapps.testapp.connector.TestProfileConnector;
+import com.google.android.enterprise.connectedapps.testapp.types.ProfileTestCrossProfileType;
 import org.junit.After;
 import org.junit.AfterClass;
 import org.junit.Before;
@@ -42,7 +44,10 @@ import org.junit.runners.JUnit4;
 public class ConnectTest {
   private static final Application context = ApplicationProvider.getApplicationContext();
 
+  private static final String STRING = "String";
+
   private static final TestProfileConnector connector = TestProfileConnector.create(context);
+  private final ProfileTestCrossProfileType type = ProfileTestCrossProfileType.create(connector);
   private static final InstrumentedTestUtilities utilities =
       new InstrumentedTestUtilities(context, connector);
 
@@ -95,6 +100,17 @@ public class ConnectTest {
     connector.connect();
 
     assertThat(connector.isConnected()).isTrue();
+  }
+
+  // This is testing a race condition so it tries the same thing repeatedly. If this test becomes
+  // flaky it indicates the race condition is back
+  @Test
+  public void connect_immediatelyUsesConnection_connectionHolderIsSet() throws Exception {
+    for (int i = 0; i < 1000; i++) {
+      try (ProfileConnectionHolder ignored = connector.connect()) {
+        assertThat(type.other().identityStringMethod(STRING)).isEqualTo(STRING);
+      }
+    }
   }
 
   private void connectIgnoreExceptions() {

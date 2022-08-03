@@ -108,18 +108,6 @@ public class OtherProfileSynchronousTest {
   }
 
   @Test
-  public void other_synchronous_isBound_automaticConnectionManagement_throwsException()
-      throws Exception {
-    testUtilities.turnOnWorkProfile();
-    testProfileConnector.clearConnectionHolders();
-    ListenableFuture<Void> ignored =
-        profileTestCrossProfileType.other().listenableFutureVoidMethod(); // Causes it to bind
-
-    assertThrows(
-        UnavailableProfileException.class, () -> profileTestCrossProfileType.other().voidMethod());
-  }
-
-  @Test
   public void other_serializableObjectParameterIsNotReallySerializable_throwsException() {
     assertThrows(
         RuntimeException.class,
