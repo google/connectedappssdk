@@ -15,6 +15,7 @@
  */
 package com.google.android.enterprise.connectedapps.processor.containers;
 
+import com.google.android.enterprise.connectedapps.annotations.UncaughtExceptionsPolicy;
 import com.google.android.enterprise.connectedapps.processor.SupportedTypes;
 import com.google.auto.value.AutoValue;
 import com.squareup.javapoet.ClassName;
@@ -78,6 +79,12 @@ public abstract class ConnectorInfo {
 
   public SupportedTypes supportedTypes() {
     return getElement(ProfileConnectorInfo::supportedTypes, UserConnectorInfo::supportedTypes);
+  }
+
+  public UncaughtExceptionsPolicy uncaughtExceptionsPolicy() {
+    return profileConnector()
+        .map(ProfileConnectorInfo::uncaughtExceptionsPolicy)
+        .orElse(UncaughtExceptionsPolicy.NOTIFY_RETHROW);
   }
 
   /**

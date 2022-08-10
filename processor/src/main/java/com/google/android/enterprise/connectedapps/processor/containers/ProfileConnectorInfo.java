@@ -18,6 +18,7 @@ package com.google.android.enterprise.connectedapps.processor.containers;
 import com.google.android.enterprise.connectedapps.annotations.AvailabilityRestrictions;
 import com.google.android.enterprise.connectedapps.annotations.CustomProfileConnector;
 import com.google.android.enterprise.connectedapps.annotations.CustomProfileConnector.ProfileType;
+import com.google.android.enterprise.connectedapps.annotations.UncaughtExceptionsPolicy;
 import com.google.android.enterprise.connectedapps.processor.GeneratorUtilities;
 import com.google.android.enterprise.connectedapps.processor.SupportedTypes;
 import com.google.auto.value.AutoValue;
@@ -48,6 +49,8 @@ public abstract class ProfileConnectorInfo {
     abstract ImmutableCollection<TypeElement> importsClasses();
 
     abstract AvailabilityRestrictions availabilityRestrictions();
+
+    abstract UncaughtExceptionsPolicy uncaughtExceptionsPolicy();
   }
 
   public abstract TypeElement connectorElement();
@@ -69,6 +72,8 @@ public abstract class ProfileConnectorInfo {
   public abstract ImmutableCollection<TypeElement> importsClasses();
 
   public abstract AvailabilityRestrictions availabilityRestrictions();
+
+  public abstract UncaughtExceptionsPolicy uncaughtExceptionsPolicy();
 
   public static ProfileConnectorInfo create(
       Context context, TypeElement connectorElement, SupportedTypes globalSupportedTypes) {
@@ -100,7 +105,8 @@ public abstract class ProfileConnectorInfo {
         ImmutableSet.copyOf(parcelableWrappers),
         ImmutableSet.copyOf(futureWrappers),
         annotationInfo.importsClasses(),
-        annotationInfo.availabilityRestrictions());
+        annotationInfo.availabilityRestrictions(),
+        annotationInfo.uncaughtExceptionsPolicy());
   }
 
   private static CustomProfileConnectorAnnotationInfo extractFromCustomProfileConnectorAnnotation(
@@ -115,7 +121,8 @@ public abstract class ProfileConnectorInfo {
           ImmutableSet.of(),
           ImmutableSet.of(),
           ImmutableSet.of(),
-          AvailabilityRestrictions.DEFAULT);
+          AvailabilityRestrictions.DEFAULT,
+          UncaughtExceptionsPolicy.NOTIFY_RETHROW);
     }
 
     Collection<TypeElement> parcelableWrappers =
@@ -138,7 +145,8 @@ public abstract class ProfileConnectorInfo {
         ImmutableSet.copyOf(parcelableWrappers),
         ImmutableSet.copyOf(futureWrappers),
         ImmutableSet.copyOf(imports),
-        customProfileConnector.availabilityRestrictions());
+        customProfileConnector.availabilityRestrictions(),
+        customProfileConnector.uncaughtExceptionsPolicy());
   }
 
   public static ClassName getDefaultServiceName(Elements elements, TypeElement connectorElement) {

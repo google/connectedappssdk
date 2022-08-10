@@ -32,6 +32,8 @@ final class TestUtilities {
       "com.google.android.enterprise.connectedapps.annotations.CustomUserConnector";
   public static final String GENERATED_PROFILE_CONNECTOR_QUALIFIED_NAME =
       "com.google.android.enterprise.connectedapps.annotations.GeneratedProfileConnector";
+  public static final String UNCAUGHT_EXCEPTIONS_POLICY_QUALIFIED_NAME =
+      "com.google.android.enterprise.connectedapps.annotations.UncaughtExceptionsPolicy";
   public static final String GENERATED_USER_CONNECTOR_QUALIFIED_NAME =
       "com.google.android.enterprise.connectedapps.annotations.GeneratedUserConnector";
   public static final String PROFILE_CONNECTOR_QUALIFIED_NAME =

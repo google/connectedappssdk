@@ -31,6 +31,7 @@ import static com.google.common.base.Preconditions.checkNotNull;
 import static java.util.stream.Collectors.joining;
 
 import com.google.android.enterprise.connectedapps.annotations.CrossProfileConfiguration;
+import com.google.android.enterprise.connectedapps.annotations.UncaughtExceptionsPolicy;
 import com.google.android.enterprise.connectedapps.processor.containers.CrossProfileConfigurationInfo;
 import com.google.android.enterprise.connectedapps.processor.containers.GeneratorContext;
 import com.google.android.enterprise.connectedapps.processor.containers.ProviderClassInfo;
@@ -237,7 +238,12 @@ final class DispatcherGenerator {
         "$1T throwableBytes = bundleCallReceiver.prepareResponse(callId, throwableBundle)",
         ArrayTypeName.of(byte.class));
 
-    methodCode.addStatement("$T.delayThrow(e)", EXCEPTION_THROWER_CLASSNAME);
+    final UncaughtExceptionsPolicy exceptionsPolicy =
+        configuration.connectorInfo().uncaughtExceptionsPolicy();
+
+    if (exceptionsPolicy.rethrowExceptions) {
+      methodCode.addStatement("$T.delayThrow(e)", EXCEPTION_THROWER_CLASSNAME);
+    }
 
     methodCode.addStatement("return throwableBytes");
     methodCode.nextControlFlow("catch ($T e)", Error.class);
@@ -253,7 +259,9 @@ final class DispatcherGenerator {
         "$1T throwableBytes = bundleCallReceiver.prepareResponse(callId, throwableBundle)",
         ArrayTypeName.of(byte.class));
 
-    methodCode.addStatement("$T.delayThrow(e)", EXCEPTION_THROWER_CLASSNAME);
+    if (exceptionsPolicy.rethrowExceptions) {
+      methodCode.addStatement("$T.delayThrow(e)", EXCEPTION_THROWER_CLASSNAME);
+    }
 
     methodCode.addStatement("return throwableBytes");
     methodCode.endControlFlow();
@@ -364,4 +372,3 @@ final class DispatcherGenerator {
         getConnectedAppsServiceClassName(generatorContext, configuration), append("_Dispatcher"));
   }
 }
-
