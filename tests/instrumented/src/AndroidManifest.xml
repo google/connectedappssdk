@@ -28,6 +28,7 @@
 
   <application>
     <uses-library android:name="android.test.runner" />
+    <service android:name="com.google.android.enterprise.connectedapps.testapp.connector.ExceptionsSuppressingConnector_Service" android:exported="false" />
     <service android:name="com.google.android.enterprise.connectedapps.testapp.connector.TestProfileConnector_Service" android:exported="false" />
     <service android:name="com.google.android.enterprise.connectedapps.testapp.crossuser.AppCrossUserConnector_Service" android:exported="false" />
   </application>
