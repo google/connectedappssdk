@@ -38,6 +38,7 @@ public abstract class AbstractProfileConnector
 
   private final Context context;
   private final ScheduledExecutorService scheduledExecutorService;
+  private final boolean createdScheduledExecutorService;
   private final ConnectionBinder binder;
   private final String serviceClassName;
   private final @Nullable ProfileType primaryProfileType;
@@ -50,8 +51,10 @@ public abstract class AbstractProfileConnector
     }
     if (builder.scheduledExecutorService == null) {
       scheduledExecutorService = Executors.newSingleThreadScheduledExecutor();
+      createdScheduledExecutorService = true;
     } else {
       scheduledExecutorService = builder.scheduledExecutorService;
+      createdScheduledExecutorService = false;
     }
 
     if (builder.binder == null) {
@@ -68,6 +71,13 @@ public abstract class AbstractProfileConnector
     }
     serviceClassName = builder.serviceClassName;
     primaryProfileType = builder.primaryProfileType;
+  }
+
+  @Override
+  protected void finalize() throws Throwable {
+    if (createdScheduledExecutorService) {
+      scheduledExecutorService.shutdownNow();
+    }
   }
 
   @Override
